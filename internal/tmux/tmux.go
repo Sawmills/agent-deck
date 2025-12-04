@@ -887,12 +887,12 @@ func (s *Session) GetStatus() (string, error) {
 	if s.stateTracker == nil {
 		s.stateTracker = &StateTracker{
 			lastChangeTime:        time.Now().Add(-activityCooldown),
-			acknowledged:          true,
+			acknowledged:          false, // Start unacknowledged so stopped sessions show YELLOW
 			lastActivityTimestamp: currentTS,
 		}
-		s.lastStableStatus = "idle"
-		debugLog("%s: INIT → idle", shortName)
-		return "idle", nil
+		s.lastStableStatus = "waiting"
+		debugLog("%s: INIT → waiting", shortName)
+		return "waiting", nil
 	}
 
 	// Restored session (lastActivityTimestamp == 0)
@@ -1013,10 +1013,10 @@ func (s *Session) getStatusFallback() (string, error) {
 		s.stateTracker = &StateTracker{
 			lastHash:       currentHash,
 			lastChangeTime: time.Now().Add(-activityCooldown),
-			acknowledged:   true,
+			acknowledged:   false, // Start unacknowledged so stopped sessions show YELLOW
 		}
-		s.lastStableStatus = "idle"
-		return "idle", nil
+		s.lastStableStatus = "waiting"
+		return "waiting", nil
 	}
 
 	if s.stateTracker.lastHash == "" {

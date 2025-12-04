@@ -1225,11 +1225,11 @@ func TestStatusFlickerOnInvisibleCharsIntegration(t *testing.T) {
 	initialContent := "Done. Ready for next command."
 	sendToPane(initialContent)
 
-	// Poll 1: Get initial status. Should be "idle" on first poll (no yellow flash)
-	// (first poll initializes the tracker - returns idle to avoid yellow flash)
+	// Poll 1: Get initial status. Should be "waiting" on first poll (needs attention)
+	// (first poll initializes the tracker - returns waiting so user knows session stopped)
 	status, err := session.GetStatus()
 	assert.NoError(t, err)
-	assert.Equal(t, "idle", status, "Initial status should be 'idle' (no yellow flash on init)")
+	assert.Equal(t, "waiting", status, "Initial status should be 'waiting' (needs attention on init)")
 
 	// Set up "needs attention" state: acknowledged=false, cooldown expired
 	session.mu.Lock()
