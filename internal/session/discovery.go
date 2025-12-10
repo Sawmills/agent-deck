@@ -1,7 +1,6 @@
 package session
 
 import (
-	"log"
 	"path/filepath"
 	"strings"
 
@@ -46,11 +45,8 @@ func DiscoverExistingTmuxSessions(existingInstances []*Instance) ([]*Instance, e
 		}
 
 		// Enable mouse mode for proper scrolling in imported sessions
-		if err := sess.EnableMouseMode(); err != nil {
-			// Non-fatal: session still works, just without mouse support
-			// This can fail on very old tmux versions
-			log.Printf("Warning: failed to enable mouse mode for imported session %s: %v", title, err)
-		}
+		// Ignore errors - non-fatal, older tmux versions may not support all options
+		_ = sess.EnableMouseMode()
 
 		inst := &Instance{
 			ID:          generateID(),

@@ -62,6 +62,7 @@ type Home struct {
 	search        *Search
 	newDialog     *NewDialog
 	groupDialog   *GroupDialog   // For creating/renaming groups
+	forkDialog    *ForkDialog    // For forking sessions
 	confirmDialog *ConfirmDialog // For confirming destructive actions
 	helpOverlay   *HelpOverlay   // For showing keyboard shortcuts
 
@@ -108,6 +109,11 @@ type loadSessionsMsg struct {
 }
 
 type sessionCreatedMsg struct {
+	instance *session.Instance
+	err      error
+}
+
+type sessionForkedMsg struct {
 	instance *session.Instance
 	err      error
 }
@@ -167,6 +173,7 @@ func NewHomeWithProfile(profile string) *Home {
 		search:           NewSearch(),
 		newDialog:        NewNewDialog(),
 		groupDialog:      NewGroupDialog(),
+		forkDialog:       NewForkDialog(),
 		confirmDialog:    NewConfirmDialog(),
 		helpOverlay:      NewHelpOverlay(),
 		cursor:           0,
@@ -532,6 +539,22 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case sessionForkedMsg:
+		if msg.err != nil {
+			h.err = msg.err
+		} else {
+			h.instancesMu.Lock()
+			h.instances = append(h.instances, msg.instance)
+			h.instancesMu.Unlock()
+			// Add to existing group tree instead of rebuilding
+			h.groupTree.AddSession(msg.instance)
+			h.rebuildFlatItems()
+			h.search.SetItems(h.instances)
+			// Save both instances AND groups
+			h.saveInstances()
+		}
+		return h, nil
+
 	case sessionDeletedMsg:
 		// Report kill error if any (session may still be running in tmux)
 		if msg.killErr != nil {
@@ -558,6 +581,15 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		h.search.SetItems(h.instances)
 		// Save both instances AND groups (critical fix: was losing groups!)
 		h.saveInstances()
+		return h, nil
+
+	case sessionRestartedMsg:
+		if msg.err != nil {
+			h.err = fmt.Errorf("failed to restart session: %w", msg.err)
+		} else {
+			// Save the updated session state (new tmux session name)
+			h.saveInstances()
+		}
 		return h, nil
 
 	case updateCheckMsg:
@@ -628,6 +660,9 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if h.groupDialog.IsVisible() {
 			return h.handleGroupDialogKey(msg)
+		}
+		if h.forkDialog.IsVisible() {
+			return h.handleForkDialogKey(msg)
 		}
 		if h.confirmDialog.IsVisible() {
 			return h.handleConfirmDialogKey(msg)
@@ -846,6 +881,26 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return h, nil
 
+	case "f":
+		// Quick fork session (same title with " (fork)" suffix)
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				return h, h.quickForkSession(item.Session)
+			}
+		}
+		return h, nil
+
+	case "F", "shift+f":
+		// Fork with dialog (customize title and group)
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				return h, h.forkSessionWithDialog(item.Session)
+			}
+		}
+		return h, nil
+
 	case "g":
 		// Create new group (or subgroup if a group is selected)
 		if h.cursor < len(h.flatItems) {
@@ -940,6 +995,18 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					tmuxSess.ResetAcknowledged()
 					_ = item.Session.UpdateStatus()
 					h.saveInstances()
+				}
+			}
+		}
+		return h, nil
+
+	case "S":
+		// Restart/Start a dead/errored session (recreate tmux session)
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				if item.Session.CanRestart() {
+					return h, h.restartSession(item.Session)
 				}
 			}
 		}
@@ -1073,6 +1140,40 @@ func (h *Home) handleGroupDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return h, cmd
 }
 
+// handleForkDialogKey handles keyboard input for the fork dialog
+func (h *Home) handleForkDialogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		// Get fork parameters from dialog
+		title, groupPath := h.forkDialog.GetValues()
+		if title == "" {
+			h.err = fmt.Errorf("session name cannot be empty")
+			return h, nil
+		}
+		h.err = nil // Clear any previous error
+
+		// Find the currently selected session
+		if h.cursor < len(h.flatItems) {
+			item := h.flatItems[h.cursor]
+			if item.Type == session.ItemTypeSession && item.Session != nil {
+				h.forkDialog.Hide()
+				return h, h.forkSessionCmd(item.Session, title, groupPath)
+			}
+		}
+		h.forkDialog.Hide()
+		return h, nil
+
+	case "esc":
+		h.forkDialog.Hide()
+		h.err = nil // Clear any error
+		return h, nil
+	}
+
+	var cmd tea.Cmd
+	h.forkDialog, cmd = h.forkDialog.Update(msg)
+	return h, cmd
+}
+
 // saveInstances saves instances to storage
 func (h *Home) saveInstances() {
 	if h.storage != nil {
@@ -1105,6 +1206,55 @@ func (h *Home) createSessionInGroup(name, path, command, groupPath string) tea.C
 	}
 }
 
+// quickForkSession performs a quick fork with default title suffix " (fork)"
+func (h *Home) quickForkSession(source *session.Instance) tea.Cmd {
+	if source == nil {
+		return nil
+	}
+	// Use source title with " (fork)" suffix
+	title := source.Title + " (fork)"
+	groupPath := source.GroupPath
+	return h.forkSessionCmd(source, title, groupPath)
+}
+
+// forkSessionWithDialog opens the fork dialog to customize title and group
+func (h *Home) forkSessionWithDialog(source *session.Instance) tea.Cmd {
+	if source == nil {
+		return nil
+	}
+	// Pre-populate dialog with source session info
+	h.forkDialog.Show(source.Title, source.ProjectPath, source.GroupPath)
+	return nil
+}
+
+// forkSessionCmd creates a forked session with the given title and group
+func (h *Home) forkSessionCmd(source *session.Instance, title, groupPath string) tea.Cmd {
+	if source == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		// Check tmux availability before forking
+		if err := tmux.IsTmuxAvailable(); err != nil {
+			return sessionForkedMsg{err: fmt.Errorf("cannot fork session: %w", err)}
+		}
+
+		// Create new instance with same path and command as source
+		var inst *session.Instance
+		if groupPath != "" {
+			inst = session.NewInstanceWithGroup(title, source.ProjectPath, groupPath)
+		} else {
+			inst = session.NewInstance(title, source.ProjectPath)
+		}
+		inst.Command = source.Command
+
+		// Start the forked session
+		if err := inst.Start(); err != nil {
+			return sessionForkedMsg{err: err}
+		}
+		return sessionForkedMsg{instance: inst}
+	}
+}
+
 // sessionDeletedMsg signals that a session was deleted
 type sessionDeletedMsg struct {
 	deletedID string
@@ -1117,6 +1267,21 @@ func (h *Home) deleteSession(inst *session.Instance) tea.Cmd {
 	return func() tea.Msg {
 		killErr := inst.Kill()
 		return sessionDeletedMsg{deletedID: id, killErr: killErr}
+	}
+}
+
+// sessionRestartedMsg signals that a session was restarted
+type sessionRestartedMsg struct {
+	sessionID string
+	err       error
+}
+
+// restartSession restarts a dead/errored session by creating a new tmux session
+func (h *Home) restartSession(inst *session.Instance) tea.Cmd {
+	id := inst.ID
+	return func() tea.Msg {
+		err := inst.Restart()
+		return sessionRestartedMsg{sessionID: id, err: err}
 	}
 }
 
@@ -1233,6 +1398,9 @@ func (h *Home) View() string {
 	}
 	if h.groupDialog.IsVisible() {
 		return h.groupDialog.View()
+	}
+	if h.forkDialog.IsVisible() {
+		return h.forkDialog.View()
 	}
 	if h.confirmDialog.IsVisible() {
 		return h.confirmDialog.View()
@@ -1399,10 +1567,11 @@ func (h *Home) renderHelpBar() string {
 			contextTitle = "Session selected"
 			contextHints = []string{
 				h.helpKey("Enter", "Attach"),
+				h.helpKey("f", "Fork"),
+				h.helpKey("F", "Fork (custom)"),
 				h.helpKey("R", "Rename"),
 				h.helpKey("m", "Move to group"),
 				h.helpKey("d", "Delete"),
-				h.helpKey("h/←", "Collapse group"),
 			}
 		}
 	}
