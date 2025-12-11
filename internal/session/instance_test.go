@@ -85,7 +85,7 @@ func TestInstance_UpdateClaudeSession(t *testing.T) {
 
 	// Mock: In real test, would need actual Claude running
 	// For now, just test the method exists and doesn't crash
-	inst.UpdateClaudeSession()
+	inst.UpdateClaudeSession(nil)
 
 	// After update with no Claude running, should have no session ID
 	// (In integration test, would verify actual detection)

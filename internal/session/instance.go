@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -190,51 +191,39 @@ func (i *Instance) UpdateStatus() error {
 	}
 
 	// Update Claude session tracking (non-blocking, best-effort)
-	i.UpdateClaudeSession()
+	// Pass nil for excludeIDs - deduplication happens at manager level
+	i.UpdateClaudeSession(nil)
 
 	return nil
 }
 
-// UpdateClaudeSession updates the Claude session ID if Claude is running
-// Uses detection to find the session ID from files Claude creates
-func (i *Instance) UpdateClaudeSession() {
-	// Only track if tool is Claude
+// UpdateClaudeSession updates the Claude session ID using detection
+// excludeIDs contains session IDs already claimed by other instances
+// Pass nil to skip deduplication (when called from UpdateStatus)
+func (i *Instance) UpdateClaudeSession(excludeIDs map[string]bool) {
 	if i.Tool != "claude" {
 		return
 	}
 
-	// Get the session's working directory
-	if i.tmuxSession == nil {
+	// If we already have a session ID and it's recent, just refresh timestamp
+	if i.ClaudeSessionID != "" && time.Since(i.ClaudeDetectedAt) < 5*time.Minute {
 		return
 	}
 
-	workDir := i.tmuxSession.GetWorkDir()
-	if workDir == "" {
-		workDir = i.ProjectPath
+	// Get working directory
+	workDir := i.ProjectPath
+	if i.tmuxSession != nil {
+		if wd := i.tmuxSession.GetWorkDir(); wd != "" {
+			workDir = wd
+		}
 	}
 
-	// For forked sessions, we need to find the NEW session file created by Claude
-	// The fork command creates a new file, so we look for the most recently modified one
-	isForkSession := strings.Contains(i.Command, "--fork-session")
-
-	// Try to get session ID from Claude config
-	sessionID, err := GetClaudeSessionID(workDir)
-	if err != nil {
-		// No session found - for forks, this is expected initially (Claude still starting)
-		if isForkSession && i.ClaudeSessionID == "" {
-			// Don't clear - fork is still initializing, will retry on next tick
-			return
-		}
-		// For non-forks, clear if stale
-		if time.Since(i.ClaudeDetectedAt) > 5*time.Minute {
-			i.ClaudeSessionID = ""
-		}
-		return
+	// Use the new FindSessionForInstance with timestamp filtering and deduplication
+	sessionID := FindSessionForInstance(workDir, i.CreatedAt, excludeIDs)
+	if sessionID != "" {
+		i.ClaudeSessionID = sessionID
+		i.ClaudeDetectedAt = time.Now()
 	}
-
-	// Update session ID
-	i.ClaudeSessionID = sessionID
-	i.ClaudeDetectedAt = time.Now()
 }
 
 // WaitForClaudeSession waits for Claude to create a session file (for forked sessions)
@@ -436,4 +425,32 @@ func randomString(length int) string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(bytes)
+}
+
+// UpdateClaudeSessionsWithDedup updates Claude sessions for all instances with deduplication
+// This should be called from the manager/storage layer that has access to all instances
+func UpdateClaudeSessionsWithDedup(instances []*Instance) {
+	// Collect already-assigned session IDs
+	usedIDs := make(map[string]bool)
+	for _, inst := range instances {
+		if inst.ClaudeSessionID != "" {
+			usedIDs[inst.ClaudeSessionID] = true
+		}
+	}
+
+	// Sort instances by CreatedAt (older first get priority)
+	sort.Slice(instances, func(i, j int) bool {
+		return instances[i].CreatedAt.Before(instances[j].CreatedAt)
+	})
+
+	// Update each instance that needs detection
+	for _, inst := range instances {
+		if inst.Tool == "claude" && inst.ClaudeSessionID == "" {
+			inst.UpdateClaudeSession(usedIDs)
+			// If we found one, add to used IDs
+			if inst.ClaudeSessionID != "" {
+				usedIDs[inst.ClaudeSessionID] = true
+			}
+		}
+	}
 }
