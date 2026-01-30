@@ -39,7 +39,12 @@ func NewOpenAIProvider(apiKey, model string, baseURL ...string) (*OpenAIProvider
 }
 
 // Chat sends messages to OpenAI and returns a single response
-func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (string, error) {
+func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (response string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in OpenAI provider: %v", r)
+		}
+	}()
 	// Convert our Message format to OpenAI's format
 	openaiMessages := make([]openai.ChatCompletionMessage, len(messages))
 	for i, msg := range messages {
@@ -60,7 +65,7 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (string, 
 	}
 
 	// Call the OpenAI API
-	response, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+	apiResponse, err := p.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:       p.model,
 		Messages:    openaiMessages,
 		MaxTokens:   4096,
@@ -71,11 +76,12 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (string, 
 	}
 
 	// Extract the text response
-	if len(response.Choices) == 0 {
+	if len(apiResponse.Choices) == 0 {
 		return "", fmt.Errorf("empty response from OpenAI API")
 	}
 
-	return response.Choices[0].Message.Content, nil
+	response = apiResponse.Choices[0].Message.Content
+	return response, nil
 }
 
 // ChatStream sends messages to OpenAI and returns a channel of response chunks

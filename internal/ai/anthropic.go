@@ -32,7 +32,12 @@ func NewAnthropicProvider(apiKey, model string) (*AnthropicProvider, error) {
 }
 
 // Chat sends messages to Claude and returns a single response
-func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message) (string, error) {
+func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message) (response string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in Anthropic provider: %v", r)
+		}
+	}()
 	// Convert our Message format to Anthropic's format
 	anthropicMessages := make([]anthropic.MessageParam, len(messages))
 	for i, msg := range messages {
@@ -50,7 +55,7 @@ func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message) (strin
 	}
 
 	// Call the Anthropic API
-	response, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
+	apiResponse, err := p.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:     anthropic.Model(p.model),
 		MaxTokens: 4096,
 		Messages:  anthropicMessages,
@@ -60,17 +65,18 @@ func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message) (strin
 	}
 
 	// Extract the text response
-	if len(response.Content) == 0 {
+	if len(apiResponse.Content) == 0 {
 		return "", fmt.Errorf("empty response from Anthropic API")
 	}
 
 	// The first content block should be text
-	firstBlock := response.Content[0]
+	firstBlock := apiResponse.Content[0]
 	if firstBlock.Type != "text" {
 		return "", fmt.Errorf("unexpected response type from Anthropic API: %s", firstBlock.Type)
 	}
 
-	return firstBlock.Text, nil
+	response = firstBlock.Text
+	return response, nil
 }
 
 // ChatStream sends messages to Claude and returns a channel of response chunks

@@ -43,3 +43,10 @@
 - Follows same pattern as other optional config sections
 - No getter functions added yet (will be needed for default application)
 - Environment variable interpolation will need custom handling in provider code
+
+## Provider Hardening (2026-01-30)
+- Provider Chat methods should `defer` panic recovery and return provider-specific errors
+- Anthropic tests rely on `ANTHROPIC_BASE_URL` to point the SDK at a local httptest server
+- OpenAI tests set baseURL to `{server}/v1` to match `chat/completions` routing
+- Retry tests verify 1s/2s/4s backoff timing with real sleeps and a slack window
+- Package-level TestMain sets `AGENTDECK_PROFILE=_test` for isolation
