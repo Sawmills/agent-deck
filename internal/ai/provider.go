@@ -25,5 +25,10 @@ type AIProvider interface {
 // apiKey: API key for the provider
 // model: model name/ID for the provider
 func NewProvider(providerType, apiKey, model string) (AIProvider, error) {
-	return nil, fmt.Errorf("not implemented yet")
+	switch providerType {
+	case "anthropic":
+		return NewAnthropicProvider(apiKey, model)
+	default:
+		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
+	}
 }
