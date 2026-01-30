@@ -69,3 +69,55 @@
 - Return copies from GetObservations/GetLatestObservation to prevent external mutation
 - Accept `*Instance` rather than session ID in Observe() for direct tmux access
 - Preallocate observations slice with capacity equal to retention count
+
+## Observation Persistence Implementation (2026-01-30)
+
+### Atomic Write Pattern (Crash-Safe)
+- **Pattern**: Write to temp file → fsync → atomic rename
+- **Why**: Prevents data corruption if process crashes during write
+- **Implementation**:
+  1. Write JSON to `{path}.tmp` with 0600 permissions (owner only)
+  2. Call `syncFile()` to fsync data to disk (non-fatal if fails)
+  3. Atomic `os.Rename(tmpPath, path)` - atomic on POSIX systems
+- **Cleanup**: `cleanupTempFiles()` removes leftover `.tmp` files on startup
+- **Reused from**: `storage.go:SaveWithGroups()` pattern (lines 275-307)
+
+### Profile Isolation
+- **Storage path**: `~/.agent-deck/profiles/{profile}/observations/{sessionID}.json`
+- **Helper function**: `getObservationsPath(profile, sessionID)` validates inputs and constructs path
+- **Profile validation**: Uses `GetProfileDir()` which sanitizes profile name (prevents path traversal)
+- **Directory creation**: `os.MkdirAll(dir, 0700)` ensures secure permissions (owner only)
+
+### SessionObserver Constructor Change
+- **Added field**: `profile string` to SessionObserver struct
+- **Updated constructor**: `NewSessionObserver(profile string, config *AIObservationSettings)`
+- **Why**: Needed to pass profile to SaveObservations() without requiring caller to track it
+- **Note**: This is a breaking change - callers must now provide profile
+
+### SaveObservations() Design
+- **Lock strategy**: Read-lock to copy observations, then release lock before I/O
+- **Why**: Prevents blocking other observers during disk write
+- **JSON format**: `json.MarshalIndent(..., "", "  ")` for human-readable storage
+- **Error handling**: Logs fsync failures but doesn't fail - atomic rename still provides safety
+- **Called from**: `Observe()` after adding observation to ring buffer
+
+### LoadObservations() Design
+- **Non-error on missing file**: Returns nil if file doesn't exist (observations may not be persisted yet)
+- **Auto-cleanup**: Deletes files older than 30 days on load (time.Since(fileInfo.ModTime()) > 30*24*time.Hour)
+- **Merge strategy**: Replaces in-memory observations with loaded ones (handles reload case)
+- **Lock strategy**: Acquires write lock only when updating observer state
+
+### Testing Considerations
+- No fsnotify watcher yet (deferred to later task)
+- Tests should verify:
+  1. Observations persist to correct path
+  2. Atomic write prevents corruption (temp file cleanup)
+  3. Profile isolation (different profiles have separate files)
+  4. 30-day cleanup works
+  5. Load/save round-trip preserves data
+
+### Integration Notes
+- `Observe()` now calls `SaveObservations()` after adding observation
+- Persistence is synchronous (blocks until written) - consider async in future if performance issue
+- No conversation history persistence (stateless Q&A per plan)
+- Observations are JSON array of Observation structs (timestamp, content, hash, status)

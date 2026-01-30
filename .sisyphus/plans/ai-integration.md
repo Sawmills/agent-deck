@@ -286,7 +286,7 @@ go test -v ./internal/session/... -run TestParseAIConfig
 
 ---
 
-### Task 3: Observation Layer
+### Task 3: Observation Layer ✅
 
 **What to do**:
 - Create `internal/session/observer.go`
