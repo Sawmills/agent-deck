@@ -493,7 +493,7 @@ go test -v ./internal/session/... -run TestWatchGoalPersistence
 
 ---
 
-### Task 6: AI Chat TUI Panel
+### Task 6: AI Chat TUI Panel ✅
 
 **What to do**:
 - Create `internal/ui/ai_chat.go`
@@ -570,7 +570,7 @@ go test -v ./internal/ui/... -run TestAIChatClose
 
 ---
 
-### Task 7: Watch Dialog TUI
+### Task 7: Watch Dialog TUI ✅
 
 **What to do**:
 - Create `internal/ui/watch_dialog.go`
@@ -648,7 +648,7 @@ go test -v ./internal/ui/... -run TestWatchDialogToggle
 
 ---
 
-### Task 8: Keybinding Integration
+### Task 8: Keybinding Integration ✅
 
 **What to do**:
 - Add keybindings to `internal/ui/home.go`:
@@ -713,7 +713,7 @@ make test
 
 ---
 
-### Task 9: Integration Testing and Polish
+### Task 9: Integration Testing and Polish ✅
 
 **What to do**:
 - Create integration test file `internal/ai/integration_test.go`

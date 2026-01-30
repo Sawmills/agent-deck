@@ -136,3 +136,50 @@
 ### Persistence
 - Goals stored at `~/.agent-deck/profiles/{profile}/watch_goals.json`
 - Atomic write: temp file + fsync + rename, 0600 permissions
+
+## [2026-01-30] Final Session - Tasks 6-9 Complete
+
+### TUI Implementation Patterns
+- **Delegation Limitation**: Complex Bubble Tea components (300-500 LOC) cannot be created via delegation system
+- **Direct Implementation Required**: TUI components with multiple modes, form handling, and complex state need manual implementation
+- **Pattern to Follow**: Read existing dialogs (mcp_dialog.go, newdialog.go) and replicate structure
+
+### Bubble Tea Best Practices
+- **Update() Pattern**: Handle KeyMsg, return (tea.Model, tea.Cmd)
+- **View() Must Be Pure**: No I/O, only rendering with lipgloss
+- **Form Focus Management**: Track focusIndex, Tab cycles through inputs, updateFocus() helper
+- **Mode Switching**: Use enum for mode, reset state on mode change
+- **Dialog Visibility**: Each dialog manages its own visible bool, no global view state needed
+
+### Integration Patterns
+- **Home Struct Fields**: Add dialog fields alongside existing dialogs
+- **Initialization**: Check config, create AI provider, initialize observer/watchMgr, create dialogs
+- **Message Routing**: Check dialog visibility in Update(), route messages to active dialog
+- **Rendering**: Check dialog visibility in View(), render active dialog
+- **Cleanup**: Call Stop() on managers in shutdown handler
+
+### API Corrections
+- **Context Parameter**: AIProvider.Chat() requires context.Context as first parameter
+- **WatchManager Methods**: GetGoals() not ListGoals(), RemoveGoal() not DeleteGoal()
+- **No UpdateGoal**: Must RemoveGoal() then AddGoal() with preserved ID
+
+### Testing Strategy
+- **Backend First**: All backend tests must pass before TUI integration
+- **Build Verification**: go build ./cmd/agent-deck must succeed
+- **Manual QA Required**: TUI components need hands-on testing for visual/interaction bugs
+
+### Success Metrics
+- ✅ All 9 tasks completed
+- ✅ 17 commits with clear messages
+- ✅ All tests passing
+- ✅ Clean build
+- ✅ Comprehensive documentation
+
+### Time Investment
+- Wave 1 (Foundation): ~2 hours
+- Wave 2 (Observation): ~3 hours
+- Wave 3 (TUI): ~4 hours (including delegation attempts)
+- Total: ~9 hours for complete AI integration
+
+### Key Takeaway
+**Orchestrator Pattern Works**: Delegation succeeded for backend logic, failed for complex TUI. Direct implementation was faster than repeated delegation attempts. Know when to delegate vs. implement directly.
