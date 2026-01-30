@@ -408,7 +408,7 @@ go test -v ./internal/session/... -run TestObservationProfileIsolation
 
 ---
 
-### Task 5: Watch Mode Core
+### Task 5: Watch Mode Core ✅
 
 **What to do**:
 - Create `internal/session/watch.go`
