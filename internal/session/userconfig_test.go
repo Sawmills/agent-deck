@@ -602,3 +602,185 @@ enabled = true
 		t.Errorf("GetNotificationsSettings MaxShown: should default to 6, got %d", settings.MaxShown)
 	}
 }
+
+// ============================================================================
+// AI Settings Tests
+// ============================================================================
+
+func TestParseAIConfig(t *testing.T) {
+	// Test parsing complete AI config with all fields
+	tmpDir := t.TempDir()
+	configContent := `
+[ai]
+enabled = true
+provider = "anthropic"
+api_key = "${ANTHROPIC_API_KEY}"
+model = "claude-opus-4-5-20250514"
+max_tokens_per_request = 4096
+daily_token_limit = 100000
+request_timeout = 30
+
+[ai.observation]
+persist = true
+retention_count = 100
+max_size_bytes = 51200
+
+[ai.watch]
+enabled = true
+max_concurrent_goals = 10
+default_interval = 5
+default_timeout = 3600
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	// Test parsing
+	var config UserConfig
+	_, err := toml.DecodeFile(configPath, &config)
+	if err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	// Verify AI settings
+	if config.AI == nil {
+		t.Fatal("Expected AI settings to be parsed, got nil")
+	}
+
+	if config.AI.Enabled == nil || !*config.AI.Enabled {
+		t.Error("Expected AI.Enabled to be true")
+	}
+	if config.AI.Provider != "anthropic" {
+		t.Errorf("Expected Provider 'anthropic', got %q", config.AI.Provider)
+	}
+	if config.AI.APIKey != "${ANTHROPIC_API_KEY}" {
+		t.Errorf("Expected APIKey '${ANTHROPIC_API_KEY}', got %q", config.AI.APIKey)
+	}
+	if config.AI.Model != "claude-opus-4-5-20250514" {
+		t.Errorf("Expected Model 'claude-opus-4-5-20250514', got %q", config.AI.Model)
+	}
+	if config.AI.MaxTokensPerRequest == nil || *config.AI.MaxTokensPerRequest != 4096 {
+		t.Error("Expected MaxTokensPerRequest to be 4096")
+	}
+	if config.AI.DailyTokenLimit == nil || *config.AI.DailyTokenLimit != 100000 {
+		t.Error("Expected DailyTokenLimit to be 100000")
+	}
+	if config.AI.RequestTimeout == nil || *config.AI.RequestTimeout != 30 {
+		t.Error("Expected RequestTimeout to be 30")
+	}
+
+	// Verify Observation settings
+	if config.AI.Observation == nil {
+		t.Fatal("Expected Observation settings to be parsed, got nil")
+	}
+	if config.AI.Observation.Persist == nil || !*config.AI.Observation.Persist {
+		t.Error("Expected Observation.Persist to be true")
+	}
+	if config.AI.Observation.RetentionCount == nil || *config.AI.Observation.RetentionCount != 100 {
+		t.Error("Expected Observation.RetentionCount to be 100")
+	}
+	if config.AI.Observation.MaxSizeBytes == nil || *config.AI.Observation.MaxSizeBytes != 51200 {
+		t.Error("Expected Observation.MaxSizeBytes to be 51200")
+	}
+
+	// Verify Watch settings
+	if config.AI.Watch == nil {
+		t.Fatal("Expected Watch settings to be parsed, got nil")
+	}
+	if config.AI.Watch.Enabled == nil || !*config.AI.Watch.Enabled {
+		t.Error("Expected Watch.Enabled to be true")
+	}
+	if config.AI.Watch.MaxConcurrentGoals == nil || *config.AI.Watch.MaxConcurrentGoals != 10 {
+		t.Error("Expected Watch.MaxConcurrentGoals to be 10")
+	}
+	if config.AI.Watch.DefaultInterval == nil || *config.AI.Watch.DefaultInterval != 5 {
+		t.Error("Expected Watch.DefaultInterval to be 5")
+	}
+	if config.AI.Watch.DefaultTimeout == nil || *config.AI.Watch.DefaultTimeout != 3600 {
+		t.Error("Expected Watch.DefaultTimeout to be 3600")
+	}
+}
+
+func TestParseAIConfig_OmittedFields(t *testing.T) {
+	// Test that omitted pointer fields are nil (not zero values)
+	tmpDir := t.TempDir()
+	configContent := `
+[ai]
+provider = "anthropic"
+model = "claude-opus-4-5-20250514"
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	_, err := toml.DecodeFile(configPath, &config)
+	if err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if config.AI == nil {
+		t.Fatal("Expected AI settings to be parsed, got nil")
+	}
+
+	// Pointer fields should be nil when omitted
+	if config.AI.Enabled != nil {
+		t.Error("Expected AI.Enabled to be nil when omitted")
+	}
+	if config.AI.MaxTokensPerRequest != nil {
+		t.Error("Expected AI.MaxTokensPerRequest to be nil when omitted")
+	}
+	if config.AI.DailyTokenLimit != nil {
+		t.Error("Expected AI.DailyTokenLimit to be nil when omitted")
+	}
+	if config.AI.RequestTimeout != nil {
+		t.Error("Expected AI.RequestTimeout to be nil when omitted")
+	}
+
+	// Nested sections should be nil when omitted
+	if config.AI.Observation != nil {
+		t.Error("Expected AI.Observation to be nil when omitted")
+	}
+	if config.AI.Watch != nil {
+		t.Error("Expected AI.Watch to be nil when omitted")
+	}
+}
+
+func TestParseAIConfig_PartialObservation(t *testing.T) {
+	// Test parsing with only some observation fields set
+	tmpDir := t.TempDir()
+	configContent := `
+[ai]
+provider = "anthropic"
+
+[ai.observation]
+persist = false
+`
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	var config UserConfig
+	_, err := toml.DecodeFile(configPath, &config)
+	if err != nil {
+		t.Fatalf("Failed to decode: %v", err)
+	}
+
+	if config.AI == nil || config.AI.Observation == nil {
+		t.Fatal("Expected Observation settings to be parsed")
+	}
+
+	if config.AI.Observation.Persist == nil || *config.AI.Observation.Persist {
+		t.Error("Expected Observation.Persist to be false")
+	}
+	// Omitted fields should be nil
+	if config.AI.Observation.RetentionCount != nil {
+		t.Error("Expected Observation.RetentionCount to be nil when omitted")
+	}
+	if config.AI.Observation.MaxSizeBytes != nil {
+		t.Error("Expected Observation.MaxSizeBytes to be nil when omitted")
+	}
+}

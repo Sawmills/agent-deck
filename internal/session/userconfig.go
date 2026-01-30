@@ -71,6 +71,9 @@ type UserConfig struct {
 
 	// Maintenance defines automatic maintenance worker settings
 	Maintenance MaintenanceSettings `toml:"maintenance"`
+
+	// AI defines AI provider configuration and observation/watch settings
+	AI *AISettings `toml:"ai"`
 }
 
 // MCPPoolSettings defines HTTP MCP pool configuration
@@ -528,6 +531,73 @@ type MaintenanceSettings struct {
 	// Enabled enables the maintenance worker (default: false)
 	// Prunes Gemini logs, cleans old backups, archives bloated sessions
 	Enabled bool `toml:"enabled"`
+}
+
+// AISettings defines AI provider configuration and observation/watch settings
+type AISettings struct {
+	// Enabled enables AI provider integration (default: false)
+	Enabled *bool `toml:"enabled"`
+
+	// Provider is the AI provider name (e.g., "anthropic", "openai", "google")
+	// Default: "anthropic"
+	Provider string `toml:"provider"`
+
+	// APIKey is the API key for the provider (supports ${ENV_VAR} interpolation)
+	APIKey string `toml:"api_key"`
+
+	// Model is the model identifier (e.g., "claude-opus-4-5-20250514")
+	// Default: "claude-opus-4-5-20250514"
+	Model string `toml:"model"`
+
+	// MaxTokensPerRequest is the maximum tokens per API request
+	// Default: 4096
+	MaxTokensPerRequest *int `toml:"max_tokens_per_request"`
+
+	// DailyTokenLimit is the maximum tokens allowed per day
+	// Default: 100000
+	DailyTokenLimit *int `toml:"daily_token_limit"`
+
+	// RequestTimeout is the timeout in seconds for API requests
+	// Default: 30
+	RequestTimeout *int `toml:"request_timeout"`
+
+	// Observation configures observation/recording settings
+	Observation *AIObservationSettings `toml:"observation"`
+
+	// Watch configures watch mode settings for autonomous goal execution
+	Watch *AIWatchSettings `toml:"watch"`
+}
+
+// AIObservationSettings configures observation recording and retention
+type AIObservationSettings struct {
+	// Persist enables persisting observations to disk (default: true)
+	Persist *bool `toml:"persist"`
+
+	// RetentionCount is the maximum number of observations to keep per session
+	// Default: 100
+	RetentionCount *int `toml:"retention_count"`
+
+	// MaxSizeBytes is the maximum size in bytes for a single observation
+	// Default: 51200 (50KB)
+	MaxSizeBytes *int `toml:"max_size_bytes"`
+}
+
+// AIWatchSettings configures autonomous goal execution watch mode
+type AIWatchSettings struct {
+	// Enabled enables watch mode for autonomous goal execution (default: true)
+	Enabled *bool `toml:"enabled"`
+
+	// MaxConcurrentGoals is the maximum number of concurrent goals to execute
+	// Default: 10
+	MaxConcurrentGoals *int `toml:"max_concurrent_goals"`
+
+	// DefaultInterval is the default polling interval in seconds
+	// Default: 5
+	DefaultInterval *int `toml:"default_interval"`
+
+	// DefaultTimeout is the default timeout in seconds for goal execution
+	// Default: 3600 (1 hour)
+	DefaultTimeout *int `toml:"default_timeout"`
 }
 
 // Default user config (empty maps)

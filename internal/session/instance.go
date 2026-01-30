@@ -2604,7 +2604,7 @@ opencode import "$tmpfile" 2>&1 || { echo "Import failed"; exit 1; }
 tmux set-environment OPENCODE_SESSION_ID "$new_id"
 echo "Forked to: $new_id"
 opencode -s "$new_id"
-`, workDir, workDir, envPrefix, i.OpenCodeSessionID, i.OpenCodeSessionID, i.OpenCodeSessionID)
+`, workDir, workDir, envPrefix, i.OpenCodeSessionID, i.OpenCodeSessionID)
 
 	f, err := os.CreateTemp("", "opencode-fork-*.sh")
 	if err != nil {
