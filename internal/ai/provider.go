@@ -21,13 +21,17 @@ type AIProvider interface {
 }
 
 // NewProvider creates a new AI provider instance
-// providerType: "claude", "gemini", "openai", etc.
+// providerType: "claude", "gemini", "openai", "openrouter", etc.
 // apiKey: API key for the provider
 // model: model name/ID for the provider
 func NewProvider(providerType, apiKey, model string) (AIProvider, error) {
 	switch providerType {
 	case "anthropic":
 		return NewAnthropicProvider(apiKey, model)
+	case "openai":
+		return NewOpenAIProvider(apiKey, model)
+	case "openrouter":
+		return NewOpenAIProvider(apiKey, model, "https://openrouter.ai/api/v1")
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerType)
 	}
