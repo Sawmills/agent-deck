@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"github.com/asheshgoplani/agent-deck/internal/ai"
 	"github.com/asheshgoplani/agent-deck/internal/clipboard"
 	"github.com/asheshgoplani/agent-deck/internal/git"
 	"github.com/asheshgoplani/agent-deck/internal/session"
@@ -133,16 +134,20 @@ type Home struct {
 	globalSearch        *GlobalSearch              // Global session search across all Claude conversations
 	globalSearchIndex   *session.GlobalSearchIndex // Search index (nil if disabled)
 	newDialog           *NewDialog
-	groupDialog         *GroupDialog         // For creating/renaming groups
-	forkDialog          *ForkDialog          // For forking sessions
-	confirmDialog       *ConfirmDialog       // For confirming destructive actions
-	helpOverlay         *HelpOverlay         // For showing keyboard shortcuts
-	mcpDialog           *MCPDialog           // For managing MCPs
-	setupWizard         *SetupWizard         // For first-run setup
-	settingsPanel       *SettingsPanel       // For editing settings
-	analyticsPanel      *AnalyticsPanel      // For displaying session analytics
-	geminiModelDialog   *GeminiModelDialog   // For selecting Gemini model
-	sessionPickerDialog *SessionPickerDialog // For sending output to another session
+	groupDialog         *GroupDialog             // For creating/renaming groups
+	forkDialog          *ForkDialog              // For forking sessions
+	confirmDialog       *ConfirmDialog           // For confirming destructive actions
+	helpOverlay         *HelpOverlay             // For showing keyboard shortcuts
+	mcpDialog           *MCPDialog               // For managing MCPs
+	setupWizard         *SetupWizard             // For first-run setup
+	settingsPanel       *SettingsPanel           // For editing settings
+	analyticsPanel      *AnalyticsPanel          // For displaying session analytics
+	geminiModelDialog   *GeminiModelDialog       // For selecting Gemini model
+	sessionPickerDialog *SessionPickerDialog     // For sending output to another session
+	aiChatPanel         *AIChatPanel             // For AI chat about sessions
+	watchDialog         *WatchDialog             // For watch goal management
+	observer            *session.SessionObserver // Tracks observations
+	watchMgr            *session.WatchManager    // Manages watch goals
 
 	// Analytics cache (async fetching with TTL)
 	currentAnalytics       *session.SessionAnalytics                  // Current analytics for selected session (Claude)
@@ -539,6 +544,29 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 		} else {
 			h.globalSearchIndex = globalSearchIndex
 			h.globalSearch.SetIndex(globalSearchIndex)
+		}
+	}
+
+	// Initialize AI components if enabled
+	if userConfig != nil && userConfig.AI != nil && userConfig.AI.Enabled != nil && *userConfig.AI.Enabled {
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" && userConfig.AI.APIKey != "" {
+			apiKey = userConfig.AI.APIKey
+		}
+		if apiKey != "" {
+			model := "claude-sonnet-4-20250514"
+			if userConfig.AI.Model != "" {
+				model = userConfig.AI.Model
+			}
+			aiProvider, err := ai.NewProvider("anthropic", apiKey, model)
+			if err != nil {
+				log.Printf("Warning: failed to initialize AI provider: %v", err)
+			} else {
+				h.observer = session.NewSessionObserver(actualProfile, userConfig.AI.Observation)
+				h.watchMgr = session.NewWatchManager(h.observer, aiProvider, userConfig.AI.Watch)
+				h.aiChatPanel = NewAIChatPanel("", h.observer, aiProvider)
+				h.watchDialog = NewWatchDialog(h.watchMgr)
+			}
 		}
 	}
 
@@ -2707,6 +2735,16 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if h.sessionPickerDialog.IsVisible() {
 			return h.handleSessionPickerDialogKey(msg)
 		}
+		if h.aiChatPanel != nil && h.aiChatPanel.IsVisible() {
+			newPanel, cmd := h.aiChatPanel.Update(msg)
+			h.aiChatPanel = newPanel.(*AIChatPanel)
+			return h, cmd
+		}
+		if h.watchDialog != nil && h.watchDialog.IsVisible() {
+			var cmd tea.Cmd
+			h.watchDialog, cmd = h.watchDialog.Update(msg)
+			return h, cmd
+		}
 
 		// Main view keys
 		return h.handleMainKey(msg)
@@ -3593,6 +3631,23 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		h.rebuildFlatItems()
 		return h, nil
+
+	case "A", "shift+a":
+		if h.aiChatPanel != nil {
+			if selected := h.getSelectedSession(); selected != nil {
+				h.aiChatPanel.sessionID = selected.ID
+				h.aiChatPanel.SetSize(h.width, h.height)
+				h.aiChatPanel.Show()
+			}
+		}
+		return h, nil
+
+	case "W", "shift+w":
+		if h.watchDialog != nil {
+			h.watchDialog.SetSize(h.width, h.height)
+			h.watchDialog.Show()
+		}
+		return h, nil
 	}
 
 	return h, nil
@@ -3697,6 +3752,10 @@ func (h *Home) performQuit(shutdownPool bool) tea.Cmd {
 // This is called via quitMsg after the splash screen has had time to render
 func (h *Home) performFinalShutdown(shutdownPool bool) tea.Cmd {
 	return func() tea.Msg {
+		// Stop watch manager workers
+		if h.watchMgr != nil {
+			h.watchMgr.Stop()
+		}
 		// Signal background worker to stop
 		h.cancel()
 		// Wait for background worker to finish (prevents race on shutdown)
@@ -4560,6 +4619,12 @@ func (h *Home) View() string {
 	}
 	if h.sessionPickerDialog.IsVisible() {
 		return h.sessionPickerDialog.View()
+	}
+	if h.aiChatPanel != nil && h.aiChatPanel.IsVisible() {
+		return h.aiChatPanel.View()
+	}
+	if h.watchDialog != nil && h.watchDialog.IsVisible() {
+		return h.watchDialog.View()
 	}
 
 	// Reuse viewBuilder to reduce allocations (reset and pre-allocate)
