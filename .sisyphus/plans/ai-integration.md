@@ -154,7 +154,7 @@ Final (After Wave 3):
 
 ## TODOs
 
-### Task 1: AI Provider Abstraction
+### Task 1: AI Provider Abstraction ✅
 
 **What to do**:
 - Create `internal/ai/` package

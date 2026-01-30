@@ -50,3 +50,22 @@
 - OpenAI tests set baseURL to `{server}/v1` to match `chat/completions` routing
 - Retry tests verify 1s/2s/4s backoff timing with real sleeps and a slack window
 - Package-level TestMain sets `AGENTDECK_PROFILE=_test` for isolation
+
+## Session Observer Implementation (2026-01-30)
+
+### Key Patterns Used
+- **Hash-based change detection**: SHA256 of content before truncation (`sha256.Sum256([]byte(content))`, `hex.EncodeToString(hash[:])`)
+- **Ring buffer FIFO**: Slice copy-shift pattern for eviction: `copy(slice, slice[1:])` then re-slice
+- **Thread-safe map access**: `sync.RWMutex` with read locks for getters, write locks for mutations
+- **Config with defaults**: Pointer-based optional config (`*int` for RetentionCount, MaxSizeBytes) with getter functions
+
+### Integration Points
+- `Instance.GetTmuxSession()` - Access tmux session from Instance (line 2656 in instance.go)
+- `tmuxSession.CapturePane()` - Capture terminal content with caching (tmux.go:976)
+- `UpdateStatus()` (instance.go:1177) - Hook point for calling Observe()
+
+### Design Decisions
+- Hash full content before truncation so ContentHash represents complete capture
+- Return copies from GetObservations/GetLatestObservation to prevent external mutation
+- Accept `*Instance` rather than session ID in Observe() for direct tmux access
+- Preallocate observations slice with capacity equal to retention count
