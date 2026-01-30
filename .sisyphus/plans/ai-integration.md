@@ -356,7 +356,7 @@ go test -v ./internal/session/... -run TestObservationTruncation
 
 ---
 
-### Task 4: Observation Persistence
+### Task 4: Observation Persistence ✅
 
 **What to do**:
 - Create storage path: `~/.agent-deck/profiles/{profile}/observations/{sessionID}.json`

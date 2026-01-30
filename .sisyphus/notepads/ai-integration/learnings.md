@@ -121,3 +121,18 @@
 - Persistence is synchronous (blocks until written) - consider async in future if performance issue
 - No conversation history persistence (stateless Q&A per plan)
 - Observations are JSON array of Observation structs (timestamp, content, hash, status)
+
+## Watch Mode Implementation (2026-01-30)
+
+### Defaults and Limits
+- Default interval 5s and timeout 1h when unset (AIWatchSettings fallback)
+- Enforce max concurrent goals (cap at 10)
+
+### Worker + Evaluation
+- Per-goal ticker worker with panic recovery and auto-pause on timeout
+- Evaluation prompt uses session observations; `<NoComment>` skips action
+- Trigger updates stored on goal (LastTriggered, TriggerCount) with action-specific logging
+
+### Persistence
+- Goals stored at `~/.agent-deck/profiles/{profile}/watch_goals.json`
+- Atomic write: temp file + fsync + rename, 0600 permissions
