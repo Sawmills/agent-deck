@@ -163,6 +163,44 @@ func (inst *Instance) ClearParent() {
 	inst.ParentProjectPath = ""
 }
 
+// GetID returns the unique identifier for this session
+func (inst *Instance) GetID() string {
+	return inst.ID
+}
+
+// GetName returns the display name (Title) of this session
+func (inst *Instance) GetName() string {
+	return inst.Title
+}
+
+// GetStatus returns the current status of the session
+func (inst *Instance) GetStatus() Status {
+	return inst.Status
+}
+
+// GetPath returns the project path where this session operates
+func (inst *Instance) GetPath() string {
+	return inst.ProjectPath
+}
+
+// GetToolType returns the tool type (e.g., "claude", "gemini", "opencode")
+func (inst *Instance) GetToolType() string {
+	return inst.Tool
+}
+
+// IsRunning returns true if the session is currently running
+func (inst *Instance) IsRunning() bool {
+	return inst.Status == StatusRunning
+}
+
+// Stop terminates the session
+func (inst *Instance) Stop() error {
+	if inst.tmuxSession == nil {
+		return fmt.Errorf("session not initialized")
+	}
+	return inst.tmuxSession.Kill()
+}
+
 // NewInstance creates a new session instance
 func NewInstance(title, projectPath string) *Instance {
 	id := generateID()
