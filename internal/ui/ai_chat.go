@@ -71,12 +71,12 @@ func (p *AIChatPanel) IsVisible() bool {
 }
 
 // Init implements tea.Model
-func (p AIChatPanel) Init() tea.Cmd {
+func (p *AIChatPanel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
 // Update implements tea.Model
-func (p AIChatPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (p *AIChatPanel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !p.visible {
 		return p, nil
 	}

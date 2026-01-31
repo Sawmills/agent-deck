@@ -1863,6 +1863,14 @@ func (h *Home) processStatusUpdate(req statusUpdateRequest) {
 func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
+	if h.aiChatPanel != nil && h.aiChatPanel.IsVisible() {
+		if _, ok := msg.(aiResponseMsg); ok {
+			newPanel, cmd := h.aiChatPanel.Update(msg)
+			h.aiChatPanel = newPanel.(*AIChatPanel)
+			return h, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case quitMsg:
 		// Execute final shutdown logic after splash delay
@@ -5442,6 +5450,12 @@ func (h *Home) renderHelpBarCompact() string {
 				contextHints = append(contextHints, h.helpKeyShort("M", "MCP"))
 				contextHints = append(contextHints, h.helpKeyShort("v", h.previewModeShort()))
 			}
+			if h.aiChatPanel != nil {
+				contextHints = append(contextHints, h.helpKeyShort("A", "AI"))
+			}
+			if h.watchDialog != nil {
+				contextHints = append(contextHints, h.helpKeyShort("W", "Watch"))
+			}
 			contextHints = append(contextHints, h.helpKeyShort("c", "Copy"))
 			contextHints = append(contextHints, h.helpKeyShort("x", "Send"))
 		}
@@ -5540,6 +5554,12 @@ func (h *Home) renderHelpBarFull() string {
 			if item.Session != nil && (item.Session.Tool == "claude" || item.Session.Tool == "gemini") {
 				primaryHints = append(primaryHints, h.helpKey("M", "MCP"))
 				primaryHints = append(primaryHints, h.helpKey("v", h.previewModeShort()))
+			}
+			if h.aiChatPanel != nil {
+				primaryHints = append(primaryHints, h.helpKey("A", "AI"))
+			}
+			if h.watchDialog != nil {
+				primaryHints = append(primaryHints, h.helpKey("W", "Watch"))
 			}
 			primaryHints = append(primaryHints, h.helpKey("c", "Copy"))
 			primaryHints = append(primaryHints, h.helpKey("x", "Send"))
