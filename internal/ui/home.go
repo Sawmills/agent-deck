@@ -1433,40 +1433,56 @@ func (h *Home) generateAISummary(inst *session.Instance) tea.Cmd {
 	}
 
 	sessionID := inst.ID
-	prompt := inst.LatestPrompt
-	if prompt == "" {
-		return nil
-	}
-
 	tool := inst.Tool
 	title := inst.Title
 
+	todoContext := inst.GetOpenCodeTodoContext()
+	terminalOutput, _ := inst.Preview()
+
+	if todoContext == "" && terminalOutput == "" && inst.LatestPrompt == "" {
+		return nil
+	}
+
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		systemPrompt := fmt.Sprintf(`Summarize this %s coding session in ONE short sentence (max 80 chars).
-Focus only on what the user is working on. Be specific and concise.
-Do not include phrases like "The user is" - just state what's being done.
+		systemPrompt := fmt.Sprintf(`Summarize this %s coding session in ONE sentence (max 150 chars).
+Focus on WHAT was built/fixed/implemented. Be specific with endpoints, features, or components.
+Do not start with "The user" or "This session" - just state the work done.
+If the context is unclear, just return the session title as-is without explanation.
 
-Examples:
-- "Implementing JWT authentication for the API"
-- "Fixing CI pipeline Docker build failures"
-- "Adding dark mode toggle to settings page"`, tool)
+Good examples:
+- "Added GET /v1/organizations/{org_id} endpoint with membership validation and tests"
+- "Fixed Docker build failures in CI pipeline by updating base image"
+- "Implemented dark mode toggle with localStorage persistence"`, tool)
 
-		userPrompt := fmt.Sprintf("Session: %s\nLast user message: %s", title, prompt)
+		var contextParts []string
+		contextParts = append(contextParts, fmt.Sprintf("Session title: %s", title))
+
+		if todoContext != "" {
+			contextParts = append(contextParts, todoContext)
+		} else if terminalOutput != "" {
+			lines := strings.Split(terminalOutput, "\n")
+			if len(lines) > 50 {
+				lines = lines[len(lines)-50:]
+			}
+			contextParts = append(contextParts, fmt.Sprintf("Recent terminal output:\n%s", strings.Join(lines, "\n")))
+		}
+
+		userPrompt := strings.Join(contextParts, "\n\n")
+		combinedPrompt := systemPrompt + "\n\n" + userPrompt
 
 		response, err := h.aiProvider.Chat(ctx, []ai.Message{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userPrompt},
+			{Role: "user", Content: combinedPrompt},
 		})
 		if err != nil {
 			return aiSummaryMsg{sessionID: sessionID, err: err}
 		}
 
 		summary := strings.TrimSpace(response)
-		if len(summary) > 100 {
-			summary = summary[:97] + "..."
+		if len(summary) > 160 {
+			summary = summary[:157] + "..."
 		}
 
 		return aiSummaryMsg{sessionID: sessionID, summary: summary}
@@ -2620,14 +2636,16 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return h, nil
 
 	case aiSummaryMsg:
-		if msg.err == nil && msg.summary != "" {
-			h.instancesMu.Lock()
-			if inst, ok := h.instanceByID[msg.sessionID]; ok {
+		h.instancesMu.Lock()
+		if inst, ok := h.instanceByID[msg.sessionID]; ok {
+			if msg.err == nil && msg.summary != "" {
 				inst.AISummary = msg.summary
-				inst.AISummaryGeneratedAt = time.Now()
+			} else {
+				inst.AISummary = ""
 			}
-			h.instancesMu.Unlock()
+			inst.AISummaryGeneratedAt = time.Now()
 		}
+		h.instancesMu.Unlock()
 		return h, nil
 
 	case copyResultMsg:
@@ -6381,13 +6399,16 @@ func (h *Home) renderPreviewPane(width, height int) string {
 		b.WriteString(summaryHeader)
 		b.WriteString("\n")
 
+		recentlyAttempted := !selected.AISummaryGeneratedAt.IsZero() && time.Since(selected.AISummaryGeneratedAt) < 5*time.Minute
+		isGenerating := h.aiProvider != nil && !recentlyAttempted
+
 		if selected.AISummary != "" {
 			summaryStyle := lipgloss.NewStyle().Foreground(ColorAccent)
 			b.WriteString(summaryStyle.Render(selected.AISummary))
-		} else if h.aiProvider != nil {
+		} else if isGenerating {
 			loadingStyle := lipgloss.NewStyle().Foreground(ColorTextDim).Italic(true)
 			b.WriteString(loadingStyle.Render("Generating summary..."))
-		} else {
+		} else if selected.LatestPrompt != "" {
 			promptStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
 			maxCharsForTwoLines := (width - 6) * 2
 			prompt := selected.LatestPrompt

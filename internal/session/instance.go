@@ -857,6 +857,63 @@ func (i *Instance) UpdateOpenCodeSession() {
 	}
 }
 
+// GetOpenCodeTodoContext reads the OpenCode todo file for rich session context.
+// OpenCode stores todos in ~/.local/share/opencode/storage/todo/{session_id}.json
+// Returns a formatted string of completed/in-progress tasks, or empty if unavailable.
+func (i *Instance) GetOpenCodeTodoContext() string {
+	if i.Tool != "opencode" || i.OpenCodeSessionID == "" {
+		return ""
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	todoPath := filepath.Join(home, ".local", "share", "opencode", "storage", "todo", i.OpenCodeSessionID+".json")
+	data, err := os.ReadFile(todoPath)
+	if err != nil {
+		return ""
+	}
+
+	var todos []struct {
+		ID       string `json:"id"`
+		Content  string `json:"content"`
+		Status   string `json:"status"`
+		Priority string `json:"priority"`
+	}
+
+	if err := json.Unmarshal(data, &todos); err != nil {
+		return ""
+	}
+
+	if len(todos) == 0 {
+		return ""
+	}
+
+	var completed []string
+	var inProgress []string
+
+	for _, todo := range todos {
+		switch todo.Status {
+		case "completed":
+			completed = append(completed, todo.Content)
+		case "in_progress":
+			inProgress = append(inProgress, todo.Content)
+		}
+	}
+
+	var parts []string
+	if len(completed) > 0 {
+		parts = append(parts, "Completed tasks:\n- "+strings.Join(completed, "\n- "))
+	}
+	if len(inProgress) > 0 {
+		parts = append(parts, "In progress:\n- "+strings.Join(inProgress, "\n- "))
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
 // buildGenericCommand builds commands for custom tools defined in [tools.*]
 // If the tool has session resume config, builds capture-resume command similar to Claude/Gemini
 // Otherwise returns the base command as-is

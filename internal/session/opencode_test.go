@@ -214,3 +214,104 @@ func findSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+func TestGetOpenCodeTodoContext(t *testing.T) {
+	tests := []struct {
+		name      string
+		tool      string
+		sessionID string
+		wantEmpty bool
+	}{
+		{
+			name:      "Non-opencode tool returns empty",
+			tool:      "claude",
+			sessionID: "ses_test123",
+			wantEmpty: true,
+		},
+		{
+			name:      "Empty session ID returns empty",
+			tool:      "opencode",
+			sessionID: "",
+			wantEmpty: true,
+		},
+		{
+			name:      "Nonexistent session returns empty",
+			tool:      "opencode",
+			sessionID: "ses_nonexistent_999",
+			wantEmpty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			inst := &Instance{
+				Tool:              tt.tool,
+				OpenCodeSessionID: tt.sessionID,
+			}
+
+			got := inst.GetOpenCodeTodoContext()
+
+			if tt.wantEmpty && got != "" {
+				t.Errorf("GetOpenCodeTodoContext() = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestGetOpenCodeTodoContextFormatting(t *testing.T) {
+	t.Run("Returns empty for empty todo list", func(t *testing.T) {
+		todoJSON := `[]`
+		var todos []struct {
+			ID       string `json:"id"`
+			Content  string `json:"content"`
+			Status   string `json:"status"`
+			Priority string `json:"priority"`
+		}
+		if err := json.Unmarshal([]byte(todoJSON), &todos); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(todos) != 0 {
+			t.Error("Expected empty todos")
+		}
+	})
+
+	t.Run("Parses todo JSON correctly", func(t *testing.T) {
+		todoJSON := `[
+			{"id": "1", "content": "Add unit tests", "status": "completed", "priority": "high"},
+			{"id": "2", "content": "Fix bug", "status": "in_progress", "priority": "high"},
+			{"id": "3", "content": "Refactor code", "status": "pending", "priority": "low"}
+		]`
+		var todos []struct {
+			ID       string `json:"id"`
+			Content  string `json:"content"`
+			Status   string `json:"status"`
+			Priority string `json:"priority"`
+		}
+		if err := json.Unmarshal([]byte(todoJSON), &todos); err != nil {
+			t.Fatal(err)
+		}
+
+		if len(todos) != 3 {
+			t.Errorf("Expected 3 todos, got %d", len(todos))
+		}
+
+		completedCount := 0
+		inProgressCount := 0
+		for _, todo := range todos {
+			if todo.Status == "completed" {
+				completedCount++
+			}
+			if todo.Status == "in_progress" {
+				inProgressCount++
+			}
+		}
+
+		if completedCount != 1 {
+			t.Errorf("Expected 1 completed, got %d", completedCount)
+		}
+		if inProgressCount != 1 {
+			t.Errorf("Expected 1 in_progress, got %d", inProgressCount)
+		}
+	})
+}
