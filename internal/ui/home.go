@@ -3644,6 +3644,17 @@ func (h *Home) handleMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if h.aiChatPanel != nil {
 			if selected := h.getSelectedSession(); selected != nil {
 				h.aiChatPanel.sessionID = selected.ID
+				h.aiChatPanel.SetContentFetcher(func(sessionID string) (string, string, error) {
+					h.instancesMu.RLock()
+					inst := h.instanceByID[sessionID]
+					h.instancesMu.RUnlock()
+					if inst == nil {
+						return "", "", fmt.Errorf("session not found")
+					}
+					content, _ := getSessionContent(inst)
+					metadata := fmt.Sprintf("Tool: %s\nPath: %s\nStatus: %s", inst.Tool, inst.ProjectPath, inst.Status)
+					return content, metadata, nil
+				})
 				h.aiChatPanel.SetSize(h.width, h.height)
 				h.aiChatPanel.Show()
 			}

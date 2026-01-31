@@ -12,18 +12,22 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// ContentFetcher is a function that fetches terminal content for a session
+type ContentFetcher func(sessionID string) (content string, metadata string, err error)
+
 // AIChatPanel is a Bubble Tea component for AI chat about session content.
 type AIChatPanel struct {
-	visible    bool
-	sessionID  string
-	observer   *session.SessionObserver
-	aiProvider ai.AIProvider
-	input      textinput.Model
-	messages   []ChatMessage
-	loading    bool
-	width      int
-	height     int
-	err        error
+	visible        bool
+	sessionID      string
+	observer       *session.SessionObserver
+	aiProvider     ai.AIProvider
+	contentFetcher ContentFetcher
+	input          textinput.Model
+	messages       []ChatMessage
+	loading        bool
+	width          int
+	height         int
+	err            error
 }
 
 // ChatMessage represents a single message in the conversation
@@ -52,6 +56,11 @@ func NewAIChatPanel(sessionID string, observer *session.SessionObserver, aiProvi
 		input:      ti,
 		messages:   []ChatMessage{},
 	}
+}
+
+// SetContentFetcher sets the callback for fetching session content
+func (p *AIChatPanel) SetContentFetcher(fetcher ContentFetcher) {
+	p.contentFetcher = fetcher
 }
 
 // Show makes the panel visible
@@ -164,37 +173,46 @@ func (p *AIChatPanel) sendMessage(userMsg string) tea.Cmd {
 	}
 }
 
-// buildContext builds context from recent observations
 func (p *AIChatPanel) buildContext() string {
-	if p.observer == nil {
-		return "No observation data available."
-	}
-
-	observations := p.observer.GetObservations(p.sessionID)
-	if len(observations) == 0 {
-		return "No observations recorded for this session yet."
-	}
-
-	// Take last 5 observations
-	start := 0
-	if len(observations) > 5 {
-		start = len(observations) - 5
-	}
-
 	var sb strings.Builder
-	sb.WriteString("Recent terminal activity:\n\n")
 
-	for i := start; i < len(observations); i++ {
-		obs := observations[i]
-		sb.WriteString(fmt.Sprintf("[%s] Status: %s\n", obs.Timestamp.Format("15:04:05"), obs.Status))
-
-		// Truncate content if too long
-		content := obs.Content
-		if len(content) > 500 {
-			content = content[:500] + "..."
+	if p.contentFetcher != nil {
+		content, metadata, err := p.contentFetcher(p.sessionID)
+		if err == nil {
+			if metadata != "" {
+				sb.WriteString("Session Info:\n")
+				sb.WriteString(metadata)
+				sb.WriteString("\n\n")
+			}
+			if content != "" {
+				sb.WriteString("Current Terminal Output (last 100 lines):\n")
+				lines := strings.Split(content, "\n")
+				if len(lines) > 100 {
+					lines = lines[len(lines)-100:]
+				}
+				sb.WriteString(strings.Join(lines, "\n"))
+				sb.WriteString("\n\n")
+			}
 		}
-		sb.WriteString(content)
-		sb.WriteString("\n\n")
+	}
+
+	if p.observer != nil {
+		observations := p.observer.GetObservations(p.sessionID)
+		if len(observations) > 0 {
+			start := 0
+			if len(observations) > 3 {
+				start = len(observations) - 3
+			}
+			sb.WriteString("Recent Activity Log:\n")
+			for i := start; i < len(observations); i++ {
+				obs := observations[i]
+				sb.WriteString(fmt.Sprintf("[%s] %s\n", obs.Timestamp.Format("15:04:05"), obs.Status))
+			}
+		}
+	}
+
+	if sb.Len() == 0 {
+		return "No session context available."
 	}
 
 	return sb.String()
