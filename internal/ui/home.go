@@ -150,14 +150,7 @@ type Home struct {
 	watchMgr            *session.WatchManager    // Manages watch goals
 	aiProvider          ai.AIProvider
 
-	// Analytics cache (async fetching with TTL)
-	currentAnalytics       *session.SessionAnalytics                  // Current analytics for selected session (Claude)
-	currentGeminiAnalytics *session.GeminiSessionAnalytics            // Current analytics for selected session (Gemini)
-	analyticsSessionID     string                                     // Session ID for current analytics
-	analyticsFetchingID    string                                     // ID currently being fetched (prevents duplicates)
-	analyticsCache         map[string]*session.SessionAnalytics       // TTL cache: sessionID -> analytics (Claude)
-	geminiAnalyticsCache   map[string]*session.GeminiSessionAnalytics // TTL cache: sessionID -> analytics (Gemini)
-	analyticsCacheTime     map[string]time.Time                       // TTL cache: sessionID -> cache timestamp
+	*AnalyticsManager
 
 	// State
 	cursor         int            // Selected item index in flatItems
@@ -445,45 +438,47 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 	}
 
 	h := &Home{
-		profile:              actualProfile,
-		storage:              storage,
-		storageWarning:       storageWarning,
-		search:               NewSearch(),
-		newDialog:            NewNewDialog(),
-		groupDialog:          NewGroupDialog(),
-		forkDialog:           NewForkDialog(),
-		confirmDialog:        NewConfirmDialog(),
-		helpOverlay:          NewHelpOverlay(),
-		mcpDialog:            NewMCPDialog(),
-		setupWizard:          NewSetupWizard(),
-		settingsPanel:        NewSettingsPanel(),
-		analyticsPanel:       NewAnalyticsPanel(),
-		geminiModelDialog:    NewGeminiModelDialog(),
-		sessionPickerDialog:  NewSessionPickerDialog(),
-		cursor:               0,
-		initialLoading:       true, // Show splash until sessions load
-		ctx:                  ctx,
-		cancel:               cancel,
-		instances:            []*session.Instance{},
-		instanceByID:         make(map[string]*session.Instance),
-		groupTree:            session.NewGroupTree([]*session.Instance{}),
-		flatItems:            []session.Item{},
-		previewCache:         make(map[string]string),
-		previewCacheTime:     make(map[string]time.Time),
-		analyticsCache:       make(map[string]*session.SessionAnalytics),
-		geminiAnalyticsCache: make(map[string]*session.GeminiSessionAnalytics),
-		analyticsCacheTime:   make(map[string]time.Time),
-		launchingSessions:    make(map[string]time.Time),
-		resumingSessions:     make(map[string]time.Time),
-		mcpLoadingSessions:   make(map[string]time.Time),
-		forkingSessions:      make(map[string]time.Time),
-		lastLogActivity:      make(map[string]time.Time),
-		statusTrigger:        make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
-		statusWorkerDone:     make(chan struct{}),
-		logUpdateChan:        make(chan *session.Instance, 100), // Buffered to absorb bursts
-		boundKeys:            make(map[string]string),
-		isPrimaryInstance:    isPrimary,
-		undoStack:            make([]deletedSessionEntry, 0, 10),
+		profile:             actualProfile,
+		storage:             storage,
+		storageWarning:      storageWarning,
+		search:              NewSearch(),
+		newDialog:           NewNewDialog(),
+		groupDialog:         NewGroupDialog(),
+		forkDialog:          NewForkDialog(),
+		confirmDialog:       NewConfirmDialog(),
+		helpOverlay:         NewHelpOverlay(),
+		mcpDialog:           NewMCPDialog(),
+		setupWizard:         NewSetupWizard(),
+		settingsPanel:       NewSettingsPanel(),
+		analyticsPanel:      NewAnalyticsPanel(),
+		geminiModelDialog:   NewGeminiModelDialog(),
+		sessionPickerDialog: NewSessionPickerDialog(),
+		cursor:              0,
+		initialLoading:      true, // Show splash until sessions load
+		ctx:                 ctx,
+		cancel:              cancel,
+		instances:           []*session.Instance{},
+		instanceByID:        make(map[string]*session.Instance),
+		groupTree:           session.NewGroupTree([]*session.Instance{}),
+		flatItems:           []session.Item{},
+		previewCache:        make(map[string]string),
+		previewCacheTime:    make(map[string]time.Time),
+		AnalyticsManager: &AnalyticsManager{
+			analyticsCache:       make(map[string]*session.SessionAnalytics),
+			geminiAnalyticsCache: make(map[string]*session.GeminiSessionAnalytics),
+			analyticsCacheTime:   make(map[string]time.Time),
+		},
+		launchingSessions:  make(map[string]time.Time),
+		resumingSessions:   make(map[string]time.Time),
+		mcpLoadingSessions: make(map[string]time.Time),
+		forkingSessions:    make(map[string]time.Time),
+		lastLogActivity:    make(map[string]time.Time),
+		statusTrigger:      make(chan statusUpdateRequest, 1), // Buffered to avoid blocking
+		statusWorkerDone:   make(chan struct{}),
+		logUpdateChan:      make(chan *session.Instance, 100), // Buffered to absorb bursts
+		boundKeys:          make(map[string]string),
+		isPrimaryInstance:  isPrimary,
+		undoStack:          make([]deletedSessionEntry, 0, 10),
 	}
 
 	// Initialize notification manager if enabled in config
@@ -1350,77 +1345,6 @@ func (h *Home) detectOpenCodeSessionCmd(inst *session.Instance) tea.Cmd {
 			sessionID:  inst.OpenCodeSessionID,
 		}
 	}
-}
-
-// getAnalyticsForSession returns cached analytics if still valid (within TTL)
-// Returns nil if cache miss or expired, triggering async fetch
-func (h *Home) getAnalyticsForSession(inst *session.Instance) *session.SessionAnalytics {
-	if inst == nil {
-		return nil
-	}
-
-	// Check cache
-	if cached, ok := h.analyticsCache[inst.ID]; ok {
-		if time.Since(h.analyticsCacheTime[inst.ID]) < analyticsCacheTTL {
-			return cached
-		}
-	}
-
-	return nil // Will trigger async fetch
-}
-
-// fetchAnalytics returns a command that asynchronously parses session analytics
-// This keeps View() pure (no blocking I/O) as per Bubble Tea best practices
-func (h *Home) fetchAnalytics(inst *session.Instance) tea.Cmd {
-	if inst == nil {
-		return nil
-	}
-	sessionID := inst.ID
-
-	if inst.Tool == "claude" {
-		claudeSessionID := inst.ClaudeSessionID
-		return func() tea.Msg {
-			// Get JSONL path for this session
-			jsonlPath := inst.GetJSONLPath()
-			if jsonlPath == "" {
-				// No JSONL path available - return empty analytics
-				return analyticsFetchedMsg{
-					sessionID: sessionID,
-					analytics: nil,
-					err:       nil,
-				}
-			}
-
-			// Parse the JSONL file
-			analytics, err := session.ParseSessionJSONL(jsonlPath)
-			if err != nil {
-				log.Printf("Failed to parse analytics for session %s (claude session %s): %v", sessionID, claudeSessionID, err)
-				return analyticsFetchedMsg{
-					sessionID: sessionID,
-					analytics: nil,
-					err:       err,
-				}
-			}
-
-			return analyticsFetchedMsg{
-				sessionID: sessionID,
-				analytics: analytics,
-				err:       nil,
-			}
-		}
-	} else if inst.Tool == "gemini" {
-		return func() tea.Msg {
-			// Gemini analytics are updated via UpdateGeminiSession which is called in background
-			// during UpdateStatus(). We just return the current snapshot.
-			return analyticsFetchedMsg{
-				sessionID:       sessionID,
-				geminiAnalytics: inst.GeminiAnalytics,
-				err:             nil,
-			}
-		}
-	}
-
-	return nil
 }
 
 func (h *Home) generateAISummary(inst *session.Instance) tea.Cmd {
