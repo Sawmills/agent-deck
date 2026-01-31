@@ -148,6 +148,7 @@ type Home struct {
 	watchDialog         *WatchDialog             // For watch goal management
 	observer            *session.SessionObserver // Tracks observations
 	watchMgr            *session.WatchManager    // Manages watch goals
+	aiProvider          ai.AIProvider
 
 	// Analytics cache (async fetching with TTL)
 	currentAnalytics       *session.SessionAnalytics                  // Current analytics for selected session (Claude)
@@ -382,6 +383,12 @@ type maintenanceCompleteMsg struct {
 // clearMaintenanceMsg signals auto-clear of maintenance banner
 type clearMaintenanceMsg struct{}
 
+type aiSummaryMsg struct {
+	sessionID string
+	summary   string
+	err       error
+}
+
 // copyResultMsg is sent when async clipboard copy completes
 type copyResultMsg struct {
 	sessionTitle string
@@ -562,6 +569,7 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 			if err != nil {
 				log.Printf("Warning: failed to initialize AI provider: %v", err)
 			} else {
+				h.aiProvider = aiProvider
 				h.observer = session.NewSessionObserver(actualProfile, userConfig.AI.Observation)
 				h.watchMgr = session.NewWatchManager(h.observer, aiProvider, userConfig.AI.Watch)
 				h.aiChatPanel = NewAIChatPanel("", h.observer, aiProvider)
@@ -1413,6 +1421,56 @@ func (h *Home) fetchAnalytics(inst *session.Instance) tea.Cmd {
 	}
 
 	return nil
+}
+
+func (h *Home) generateAISummary(inst *session.Instance) tea.Cmd {
+	if inst == nil || h.aiProvider == nil {
+		return nil
+	}
+
+	if inst.AISummary != "" && time.Since(inst.AISummaryGeneratedAt) < 5*time.Minute {
+		return nil
+	}
+
+	sessionID := inst.ID
+	prompt := inst.LatestPrompt
+	if prompt == "" {
+		return nil
+	}
+
+	tool := inst.Tool
+	title := inst.Title
+
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		systemPrompt := fmt.Sprintf(`Summarize this %s coding session in ONE short sentence (max 80 chars).
+Focus only on what the user is working on. Be specific and concise.
+Do not include phrases like "The user is" - just state what's being done.
+
+Examples:
+- "Implementing JWT authentication for the API"
+- "Fixing CI pipeline Docker build failures"
+- "Adding dark mode toggle to settings page"`, tool)
+
+		userPrompt := fmt.Sprintf("Session: %s\nLast user message: %s", title, prompt)
+
+		response, err := h.aiProvider.Chat(ctx, []ai.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		})
+		if err != nil {
+			return aiSummaryMsg{sessionID: sessionID, err: err}
+		}
+
+		summary := strings.TrimSpace(response)
+		if len(summary) > 100 {
+			summary = summary[:97] + "..."
+		}
+
+		return aiSummaryMsg{sessionID: sessionID, summary: summary}
+	}
 }
 
 // getSelectedSession returns the currently selected session, or nil if a group is selected
@@ -2503,6 +2561,10 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+			if inst.AISummary == "" || time.Since(inst.AISummaryGeneratedAt) > 5*time.Minute {
+				cmds = append(cmds, h.generateAISummary(inst))
+			}
+
 			if len(cmds) > 0 {
 				return h, tea.Batch(cmds...)
 			}
@@ -2554,6 +2616,17 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					h.analyticsPanel.SetAnalytics(nil)
 				}
 			}
+		}
+		return h, nil
+
+	case aiSummaryMsg:
+		if msg.err == nil && msg.summary != "" {
+			h.instancesMu.Lock()
+			if inst, ok := h.instanceByID[msg.sessionID]; ok {
+				inst.AISummary = msg.summary
+				inst.AISummaryGeneratedAt = time.Now()
+			}
+			h.instancesMu.Unlock()
 		}
 		return h, nil
 
@@ -6302,6 +6375,29 @@ func (h *Home) renderPreviewPane(width, height int) string {
 	b.WriteString(" ")
 	b.WriteString(groupBadge)
 	b.WriteString("\n")
+
+	if selected.AISummary != "" || selected.LatestPrompt != "" {
+		summaryHeader := renderSectionDivider("Summary", width-4)
+		b.WriteString(summaryHeader)
+		b.WriteString("\n")
+
+		if selected.AISummary != "" {
+			summaryStyle := lipgloss.NewStyle().Foreground(ColorAccent)
+			b.WriteString(summaryStyle.Render(selected.AISummary))
+		} else if h.aiProvider != nil {
+			loadingStyle := lipgloss.NewStyle().Foreground(ColorTextDim).Italic(true)
+			b.WriteString(loadingStyle.Render("Generating summary..."))
+		} else {
+			promptStyle := lipgloss.NewStyle().Foreground(ColorText).Italic(true)
+			maxCharsForTwoLines := (width - 6) * 2
+			prompt := selected.LatestPrompt
+			if len(prompt) > maxCharsForTwoLines {
+				prompt = prompt[:maxCharsForTwoLines-3] + "..."
+			}
+			b.WriteString(promptStyle.Render("\"" + prompt + "\""))
+		}
+		b.WriteString("\n")
+	}
 
 	// Claude-specific info (session ID and MCPs)
 	if selected.Tool == "claude" {

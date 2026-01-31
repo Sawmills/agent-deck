@@ -72,8 +72,11 @@ type Instance struct {
 	CodexStartedAt  int64     `json:"-"` // Unix millis when we started Codex (for session matching, not persisted)
 
 	// Latest user input for context (extracted from session files)
-	LatestPrompt      string    `json:"latest_prompt,omitempty"`
-	lastPromptModTime time.Time // mtime cache for updateGeminiLatestPrompt (not serialized)
+	LatestPrompt      string `json:"latest_prompt,omitempty"`
+	lastPromptModTime time.Time
+
+	AISummary            string    `json:"-"`
+	AISummaryGeneratedAt time.Time `json:"-"`
 
 	// MCP tracking - which MCPs were loaded when session started/restarted
 	// Used to detect pending MCPs (added after session start) and stale MCPs (removed but still running)
@@ -607,9 +610,10 @@ func (i *Instance) queryOpenCodeSession() string {
 	log.Printf("[OPENCODE] Got %d bytes of session data", len(output))
 
 	// Parse JSON response
-	// Expected format: array of session objects with id, directory, created, updated fields
+	// Expected format: array of session objects with id, directory, created, updated, title fields
 	var sessions []struct {
 		ID        string `json:"id"`
+		Title     string `json:"title"` // Session title describing what user is working on
 		Directory string `json:"directory"`
 		Path      string `json:"path"`    // Some versions use path instead of directory
 		Created   int64  `json:"created"` // Unix timestamp (milliseconds)
@@ -623,48 +627,49 @@ func (i *Instance) queryOpenCodeSession() string {
 
 	log.Printf("[OPENCODE] Parsed %d sessions", len(sessions))
 
-	// Find the most recently updated session matching our project path
-	// OpenCode auto-resumes the most recent session when you run `opencode` in a directory,
-	// so we track that same session (no startTime check needed)
 	projectPath := i.ProjectPath
+	normalizedProjectPath := normalizePath(projectPath)
 
 	var bestMatch string
+	var bestMatchTitle string
 	var bestMatchTime int64
 
 	for _, sess := range sessions {
-		// Check directory match (normalize paths)
 		sessDir := sess.Directory
 		if sessDir == "" {
 			sessDir = sess.Path
 		}
 
 		normalizedSessDir := normalizePath(sessDir)
-		normalizedProjectPath := normalizePath(projectPath)
 
 		log.Printf("[OPENCODE] Session %s: dir=%q vs project=%q, created=%d, updated=%d",
 			sess.ID, sessDir, projectPath, sess.Created, sess.Updated)
 
-		// Normalize both paths for comparison
 		if sessDir == "" || normalizedSessDir != normalizedProjectPath {
 			log.Printf("[OPENCODE] Session %s: directory mismatch, skipping", sess.ID)
 			continue
 		}
 
-		// Pick the most recently updated session for this directory
 		updatedAt := sess.Updated
 		if updatedAt == 0 {
-			updatedAt = sess.Created // Fallback to created if updated not available
+			updatedAt = sess.Created
 		}
 
 		log.Printf("[OPENCODE] Session %s: directory matches, updated=%d", sess.ID, updatedAt)
 
 		if bestMatch == "" || updatedAt > bestMatchTime {
 			bestMatch = sess.ID
+			bestMatchTitle = sess.Title
 			bestMatchTime = updatedAt
 		}
 	}
 
 	log.Printf("[OPENCODE] Best match: %s (updated=%d)", bestMatch, bestMatchTime)
+
+	if bestMatchTitle != "" {
+		i.LatestPrompt = bestMatchTitle
+	}
+
 	return bestMatch
 }
 
@@ -830,6 +835,25 @@ func (i *Instance) UpdateCodexSession(excludeIDs map[string]bool) {
 		if i.tmuxSession != nil && i.tmuxSession.Exists() {
 			_ = i.tmuxSession.SetEnvironment("CODEX_SESSION_ID", i.CodexSessionID)
 		}
+	}
+}
+
+func (i *Instance) UpdateOpenCodeSession() {
+	if i.Tool != "opencode" {
+		return
+	}
+
+	if i.tmuxSession != nil {
+		if sessionID, err := i.tmuxSession.GetEnvironment("OPENCODE_SESSION_ID"); err == nil && sessionID != "" {
+			if i.OpenCodeSessionID != sessionID {
+				i.OpenCodeSessionID = sessionID
+			}
+			i.OpenCodeDetectedAt = time.Now()
+		}
+	}
+
+	if i.OpenCodeSessionID != "" {
+		i.queryOpenCodeSession()
 	}
 }
 
@@ -1253,6 +1277,11 @@ func (i *Instance) UpdateStatus() error {
 	// Update Codex session tracking (non-blocking, best-effort)
 	if i.Tool == "codex" {
 		i.UpdateCodexSession(nil)
+	}
+
+	// Update OpenCode session tracking (non-blocking, best-effort)
+	if i.Tool == "opencode" {
+		i.UpdateOpenCodeSession()
 	}
 
 	return nil
