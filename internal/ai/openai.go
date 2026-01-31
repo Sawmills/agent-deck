@@ -2,7 +2,9 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/sashabaranov/go-openai"
 )
@@ -84,8 +86,64 @@ func (p *OpenAIProvider) Chat(ctx context.Context, messages []Message) (response
 	return response, nil
 }
 
-// ChatStream sends messages to OpenAI and returns a channel of response chunks
-// Currently returns an error as streaming is not yet implemented
 func (p *OpenAIProvider) ChatStream(ctx context.Context, messages []Message) (<-chan string, error) {
-	return nil, fmt.Errorf("streaming not implemented yet")
+	openaiMessages := make([]openai.ChatCompletionMessage, len(messages))
+	for i, msg := range messages {
+		switch msg.Role {
+		case "user":
+			openaiMessages[i] = openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleUser,
+				Content: msg.Content,
+			}
+		case "assistant":
+			openaiMessages[i] = openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleAssistant,
+				Content: msg.Content,
+			}
+		default:
+			return nil, fmt.Errorf("unsupported message role: %s", msg.Role)
+		}
+	}
+
+	stream, err := p.client.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
+		Model:       p.model,
+		Messages:    openaiMessages,
+		MaxTokens:   4096,
+		Temperature: 0.7,
+		Stream:      true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai streaming error: %w", err)
+	}
+
+	chunks := make(chan string, 100)
+
+	go func() {
+		defer close(chunks)
+		defer stream.Close()
+
+		for {
+			response, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return
+			}
+			if err != nil {
+				select {
+				case chunks <- fmt.Sprintf("\n\n[Error: %v]", err):
+				case <-ctx.Done():
+				}
+				return
+			}
+
+			if len(response.Choices) > 0 && response.Choices[0].Delta.Content != "" {
+				select {
+				case chunks <- response.Choices[0].Delta.Content:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return chunks, nil
 }

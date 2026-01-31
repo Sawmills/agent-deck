@@ -1864,7 +1864,8 @@ func (h *Home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	if h.aiChatPanel != nil && h.aiChatPanel.IsVisible() {
-		if _, ok := msg.(aiResponseMsg); ok {
+		switch msg.(type) {
+		case aiResponseMsg, aiStreamChunkMsg, streamStartedMsg:
 			newPanel, cmd := h.aiChatPanel.Update(msg)
 			h.aiChatPanel = newPanel.(*AIChatPanel)
 			return h, cmd

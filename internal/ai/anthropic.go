@@ -79,8 +79,52 @@ func (p *AnthropicProvider) Chat(ctx context.Context, messages []Message) (respo
 	return response, nil
 }
 
-// ChatStream sends messages to Claude and returns a channel of response chunks
-// Currently returns an error as streaming is not yet implemented
 func (p *AnthropicProvider) ChatStream(ctx context.Context, messages []Message) (<-chan string, error) {
-	return nil, fmt.Errorf("streaming not implemented yet")
+	anthropicMessages := make([]anthropic.MessageParam, len(messages))
+	for i, msg := range messages {
+		textBlock := anthropic.NewTextBlock(msg.Content)
+		if msg.Role == "user" {
+			anthropicMessages[i] = anthropic.NewUserMessage(textBlock)
+		} else if msg.Role == "assistant" {
+			anthropicMessages[i] = anthropic.NewAssistantMessage(textBlock)
+		} else {
+			return nil, fmt.Errorf("unsupported message role: %s", msg.Role)
+		}
+	}
+
+	stream := p.client.Messages.NewStreaming(ctx, anthropic.MessageNewParams{
+		Model:     anthropic.Model(p.model),
+		MaxTokens: 4096,
+		Messages:  anthropicMessages,
+	})
+
+	chunks := make(chan string, 100)
+
+	go func() {
+		defer close(chunks)
+
+		for stream.Next() {
+			event := stream.Current()
+			switch eventVariant := event.AsAny().(type) {
+			case anthropic.ContentBlockDeltaEvent:
+				switch deltaVariant := eventVariant.Delta.AsAny().(type) {
+				case anthropic.TextDelta:
+					select {
+					case chunks <- deltaVariant.Text:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		}
+
+		if stream.Err() != nil {
+			select {
+			case chunks <- fmt.Sprintf("\n\n[Error: %v]", stream.Err()):
+			case <-ctx.Done():
+			}
+		}
+	}()
+
+	return chunks, nil
 }
