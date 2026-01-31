@@ -430,7 +430,7 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 		instanceByID:        make(map[string]*session.Instance),
 		groupTree:           session.NewGroupTree([]*session.Instance{}),
 		flatItems:           []session.Item{},
-		AIManager: &AIManager{},
+		AIManager:           &AIManager{},
 		PreviewManager: &PreviewManager{
 			previewCache:     make(map[string]string),
 			previewCacheTime: make(map[string]time.Time),

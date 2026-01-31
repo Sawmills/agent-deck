@@ -1130,6 +1130,125 @@ func TestAddSessionUpdatesDefaultPath(t *testing.T) {
 	}
 }
 
+func TestMoveSessionUpOrder(t *testing.T) {
+	instances := []*Instance{
+		{ID: "a", Title: "first", GroupPath: "test"},
+		{ID: "b", Title: "second", GroupPath: "test"},
+		{ID: "c", Title: "third", GroupPath: "test"},
+	}
+
+	tree := NewGroupTree(instances)
+	group := tree.Groups["test"]
+
+	// Move second session up (swap with first)
+	tree.MoveSessionUp(instances[1])
+
+	// Verify slice order: b, a, c
+	if group.Sessions[0].ID != "b" {
+		t.Errorf("Expected 'b' at index 0, got '%s'", group.Sessions[0].ID)
+	}
+	if group.Sessions[1].ID != "a" {
+		t.Errorf("Expected 'a' at index 1, got '%s'", group.Sessions[1].ID)
+	}
+	if group.Sessions[2].ID != "c" {
+		t.Errorf("Expected 'c' at index 2, got '%s'", group.Sessions[2].ID)
+	}
+
+	// Verify Order field values are normalized
+	for i, s := range group.Sessions {
+		if s.Order != i {
+			t.Errorf("Expected Order %d for session '%s', got %d", i, s.ID, s.Order)
+		}
+	}
+}
+
+func TestMoveSessionDownOrder(t *testing.T) {
+	instances := []*Instance{
+		{ID: "a", Title: "first", GroupPath: "test"},
+		{ID: "b", Title: "second", GroupPath: "test"},
+		{ID: "c", Title: "third", GroupPath: "test"},
+	}
+
+	tree := NewGroupTree(instances)
+	group := tree.Groups["test"]
+
+	// Move second session down (swap with third)
+	tree.MoveSessionDown(instances[1])
+
+	// Verify slice order: a, c, b
+	if group.Sessions[0].ID != "a" {
+		t.Errorf("Expected 'a' at index 0, got '%s'", group.Sessions[0].ID)
+	}
+	if group.Sessions[1].ID != "c" {
+		t.Errorf("Expected 'c' at index 1, got '%s'", group.Sessions[1].ID)
+	}
+	if group.Sessions[2].ID != "b" {
+		t.Errorf("Expected 'b' at index 2, got '%s'", group.Sessions[2].ID)
+	}
+
+	// Verify Order field values are normalized
+	for i, s := range group.Sessions {
+		if s.Order != i {
+			t.Errorf("Expected Order %d for session '%s', got %d", i, s.ID, s.Order)
+		}
+	}
+}
+
+func TestSessionOrderPersistence(t *testing.T) {
+	// Simulate sessions with Order values (as if saved after reorder)
+	instances := []*Instance{
+		{ID: "a", Title: "first", GroupPath: "test", Order: 2},
+		{ID: "b", Title: "second", GroupPath: "test", Order: 0},
+		{ID: "c", Title: "third", GroupPath: "test", Order: 1},
+	}
+
+	storedGroups := []*GroupData{
+		{Name: "test", Path: "test", Expanded: true, Order: 0},
+	}
+
+	tree := NewGroupTreeWithGroups(instances, storedGroups)
+	group := tree.Groups["test"]
+
+	// Sessions should be sorted by Order: b(0), c(1), a(2)
+	if group.Sessions[0].ID != "b" {
+		t.Errorf("Expected 'b' at index 0 (Order 0), got '%s' (Order %d)", group.Sessions[0].ID, group.Sessions[0].Order)
+	}
+	if group.Sessions[1].ID != "c" {
+		t.Errorf("Expected 'c' at index 1 (Order 1), got '%s' (Order %d)", group.Sessions[1].ID, group.Sessions[1].Order)
+	}
+	if group.Sessions[2].ID != "a" {
+		t.Errorf("Expected 'a' at index 2 (Order 2), got '%s' (Order %d)", group.Sessions[2].ID, group.Sessions[2].Order)
+	}
+}
+
+func TestSessionOrderMigration(t *testing.T) {
+	// Simulate legacy sessions with no Order field (all zero)
+	// SliceStable should preserve original JSON array order
+	instances := []*Instance{
+		{ID: "x", Title: "first", GroupPath: "test", Order: 0},
+		{ID: "y", Title: "second", GroupPath: "test", Order: 0},
+		{ID: "z", Title: "third", GroupPath: "test", Order: 0},
+	}
+
+	storedGroups := []*GroupData{
+		{Name: "test", Path: "test", Expanded: true, Order: 0},
+	}
+
+	tree := NewGroupTreeWithGroups(instances, storedGroups)
+	group := tree.Groups["test"]
+
+	// With all Order==0, SliceStable preserves original order: x, y, z
+	if group.Sessions[0].ID != "x" {
+		t.Errorf("Expected 'x' at index 0 (stable sort), got '%s'", group.Sessions[0].ID)
+	}
+	if group.Sessions[1].ID != "y" {
+		t.Errorf("Expected 'y' at index 1 (stable sort), got '%s'", group.Sessions[1].ID)
+	}
+	if group.Sessions[2].ID != "z" {
+		t.Errorf("Expected 'z' at index 2 (stable sort), got '%s'", group.Sessions[2].ID)
+	}
+}
+
 func TestSyncWithInstancesUpdatesDefaultPath(t *testing.T) {
 	now := time.Now()
 	instances := []*Instance{
@@ -1158,5 +1277,104 @@ func TestSyncWithInstancesUpdatesDefaultPath(t *testing.T) {
 	}
 	if group.DefaultPath != "/new/path" {
 		t.Errorf("Expected DefaultPath '/new/path' after sync, got %q", group.DefaultPath)
+	}
+}
+
+func TestSubgroupAppearsAfterParent(t *testing.T) {
+	tree := NewGroupTree([]*Instance{})
+
+	// Create multiple root groups
+	tree.CreateGroup("Alpha")
+	tree.CreateGroup("Beta")
+	tree.CreateGroup("Gamma")
+
+	// Create subgroup under Beta
+	child := tree.CreateSubgroup("beta", "Child")
+
+	// Verify path is correct
+	if child.Path != "beta/child" {
+		t.Errorf("Expected path 'beta/child', got '%s'", child.Path)
+	}
+
+	// Verify parent-child relationship in GroupList ordering
+	var betaIdx, childIdx int = -1, -1
+	for i, g := range tree.GroupList {
+		if g.Path == "beta" {
+			betaIdx = i
+		}
+		if g.Path == "beta/child" {
+			childIdx = i
+		}
+	}
+
+	// Child should come after parent in GroupList
+	if childIdx <= betaIdx {
+		t.Errorf("Subgroup should appear after parent in GroupList. Parent at %d, child at %d",
+			betaIdx, childIdx)
+	}
+}
+
+func TestSortingTransitivity(t *testing.T) {
+	// Reproduce the exact scenario that caused the bug:
+	// When alphabetical order differs from creation order, deep nesting
+	// could cause children to appear before their parents
+	tree := NewGroupTree([]*Instance{})
+
+	// Create "My Sessions" first (Order=0), then "Beta" (Order=1)
+	// Alphabetically: "beta" < "my-sessions", but by Order: my-sessions < beta
+	tree.CreateGroup("My Sessions")
+	tree.CreateGroup("Beta")
+	tree.CreateSubgroup("beta", "Tasks")
+	tree.CreateSubgroup("beta/tasks", "Urgent")
+
+	// Verify beta comes before its descendants
+	var betaIdx, tasksIdx, urgentIdx int = -1, -1, -1
+	for i, g := range tree.GroupList {
+		switch g.Path {
+		case "beta":
+			betaIdx = i
+		case "beta/tasks":
+			tasksIdx = i
+		case "beta/tasks/urgent":
+			urgentIdx = i
+		}
+	}
+
+	if betaIdx == -1 || tasksIdx == -1 || urgentIdx == -1 {
+		t.Fatal("Expected groups not found in GroupList")
+	}
+
+	// Parent chain should be in order: beta < tasks < urgent
+	if !(betaIdx < tasksIdx && tasksIdx < urgentIdx) {
+		t.Errorf("Parent chain out of order: beta=%d, tasks=%d, urgent=%d",
+			betaIdx, tasksIdx, urgentIdx)
+	}
+}
+
+func TestBranchOrderingByOrder(t *testing.T) {
+	tree := NewGroupTree([]*Instance{})
+
+	// Create groups where alphabetical order differs from Order
+	tree.CreateGroup("Zebra") // Created first, Order=0
+	tree.CreateGroup("Alpha") // Created second, Order=1
+
+	// Create subgroups
+	tree.CreateSubgroup("zebra", "Child")
+	tree.CreateSubgroup("alpha", "Child")
+
+	// Zebra branch should come before Alpha branch (by Order, not alphabetically)
+	var zebraIdx, alphaIdx int = -1, -1
+	for i, g := range tree.GroupList {
+		if g.Path == "zebra" {
+			zebraIdx = i
+		}
+		if g.Path == "alpha" {
+			alphaIdx = i
+		}
+	}
+
+	if zebraIdx > alphaIdx {
+		t.Errorf("Zebra (Order=0) should come before Alpha (Order=1). Zebra=%d, Alpha=%d",
+			zebraIdx, alphaIdx)
 	}
 }

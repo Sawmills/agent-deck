@@ -86,6 +86,13 @@ func NewGroupTree(instances []*Instance) *GroupTree {
 		group.Sessions = append(group.Sessions, inst)
 	}
 
+	// Sort sessions within each group by persisted Order
+	for _, group := range tree.Groups {
+		sort.SliceStable(group.Sessions, func(i, j int) bool {
+			return group.Sessions[i].Order < group.Sessions[j].Order
+		})
+	}
+
 	// Sort groups alphabetically and assign order
 	tree.rebuildGroupList()
 
@@ -147,6 +154,13 @@ func NewGroupTreeWithGroups(instances []*Instance, storedGroups []*GroupData) *G
 		group.Sessions = append(group.Sessions, inst)
 	}
 
+	// Sort sessions within each group by persisted Order
+	for _, group := range tree.Groups {
+		sort.SliceStable(group.Sessions, func(i, j int) bool {
+			return group.Sessions[i].Order < group.Sessions[j].Order
+		})
+	}
+
 	// Rebuild group list maintaining stored order
 	tree.rebuildGroupList()
 
@@ -197,8 +211,36 @@ func (t *GroupTree) rebuildGroupList() {
 		rootJ := getRootPath(pathJ)
 
 		if rootI == rootJ {
-			// Same root ancestor - they're in the same subtree
-			// Use full path to maintain parent-child ordering within the subtree
+			// Same root - find the branch ancestors at the divergence point and compare as siblings
+			// Example: comparing "a/b/c" with "a/d" - find "b" and "d" (children of common ancestor "a")
+			partsI := strings.Split(pathI, "/")
+			partsJ := strings.Split(pathJ, "/")
+
+			// Find the first point where paths diverge
+			divergeLevel := 0
+			for divergeLevel < len(partsI) && divergeLevel < len(partsJ) {
+				if partsI[divergeLevel] != partsJ[divergeLevel] {
+					break
+				}
+				divergeLevel++
+			}
+
+			// Get the branch paths at the divergence point
+			branchPathI := strings.Join(partsI[:divergeLevel+1], "/")
+			branchPathJ := strings.Join(partsJ[:divergeLevel+1], "/")
+
+			// Compare branch roots as siblings (by Order, then Name)
+			branchI := t.Groups[branchPathI]
+			branchJ := t.Groups[branchPathJ]
+
+			if branchI != nil && branchJ != nil {
+				if branchI.Order != branchJ.Order {
+					return branchI.Order < branchJ.Order
+				}
+				return branchI.Name < branchJ.Name
+			}
+
+			// Fallback to path comparison if branches not found
 			return pathI < pathJ
 		}
 
@@ -505,6 +547,10 @@ func (t *GroupTree) MoveSessionUp(inst *Instance) {
 			break
 		}
 	}
+	// Normalize Order for all sessions in group
+	for i, s := range group.Sessions {
+		s.Order = i
+	}
 }
 
 // MoveSessionDown moves a session down within its group
@@ -519,6 +565,10 @@ func (t *GroupTree) MoveSessionDown(inst *Instance) {
 			group.Sessions[i], group.Sessions[i+1] = group.Sessions[i+1], group.Sessions[i]
 			break
 		}
+	}
+	// Normalize Order for all sessions in group
+	for i, s := range group.Sessions {
+		s.Order = i
 	}
 }
 
@@ -550,6 +600,7 @@ func (t *GroupTree) MoveSessionToGroup(inst *Instance, newGroupPath string) {
 		t.Groups[newGroupPath] = newGroup
 		t.rebuildGroupList()
 	}
+	inst.Order = len(newGroup.Sessions)
 	newGroup.Sessions = append(newGroup.Sessions, inst)
 
 	// Update default paths for both old and new groups
@@ -601,12 +652,20 @@ func (t *GroupTree) CreateGroup(name string) *Group {
 		return t.Groups[path]
 	}
 
+	// Count existing root-level groups to assign sibling-relative order
+	rootCount := 0
+	for p := range t.Groups {
+		if getParentPath(p) == "" { // Root level
+			rootCount++
+		}
+	}
+
 	group := &Group{
 		Name:     sanitizedName,
 		Path:     path,
 		Expanded: true,
 		Sessions: []*Instance{},
-		Order:    len(t.GroupList),
+		Order:    rootCount, // Order among root groups
 	}
 	t.Groups[path] = group
 	t.Expanded[path] = true
@@ -625,12 +684,20 @@ func (t *GroupTree) CreateSubgroup(parentPath, name string) *Group {
 		return t.Groups[fullPath]
 	}
 
+	// Count existing siblings to assign sibling-relative order
+	siblingCount := 0
+	for p := range t.Groups {
+		if getParentPath(p) == parentPath {
+			siblingCount++
+		}
+	}
+
 	group := &Group{
 		Name:     sanitizedName,
 		Path:     fullPath,
 		Expanded: true,
 		Sessions: []*Instance{},
-		Order:    len(t.GroupList),
+		Order:    siblingCount, // Order among siblings
 	}
 	t.Groups[fullPath] = group
 	t.Expanded[fullPath] = true
@@ -833,6 +900,7 @@ func (t *GroupTree) AddSession(inst *Instance) {
 		t.Expanded[groupPath] = true
 		t.rebuildGroupList()
 	}
+	inst.Order = len(group.Sessions)
 	group.Sessions = append(group.Sessions, inst)
 	t.updateGroupDefaultPath(groupPath)
 }
@@ -902,6 +970,13 @@ func (t *GroupTree) SyncWithInstances(instances []*Instance) {
 			t.rebuildGroupList()
 		}
 		group.Sessions = append(group.Sessions, inst)
+	}
+
+	// Sort sessions within each group by persisted Order
+	for _, group := range t.Groups {
+		sort.SliceStable(group.Sessions, func(i, j int) bool {
+			return group.Sessions[i].Order < group.Sessions[j].Order
+		})
 	}
 
 	// Always rebuild GroupList at the end to ensure consistency between

@@ -1,24 +1,25 @@
-# Binaries
-bin/
-build/
+# Binaries for programs and plugins
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-/agent-deck
 
-# Test binary
+# Test binary, built with `go test -c`
 *.test
 
-# Output of go coverage tool
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Dependency directories
-vendor/
+# Dependency directories (remove the comment below to include it)
+# vendor/
 
 # Go workspace file
 go.work
+
+# Build artifacts
+build/
+dist/
 
 # IDE
 .idea/
@@ -31,19 +32,17 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Local config
+# Local development
 .env
 .env.local
 
-# Agent Deck data (for development)
-.agent-deck/
+# Test data
+test-data/
+*.log
 
-# VS Code extensions data
-.serena/
-
-# Personal/local files
-.mcp.json
+# Playwright MCP
 .playwright-mcp/
 *.screenstudio/
 
-.worktreesagent-deck-test
+.worktrees
+agent-deck-test
