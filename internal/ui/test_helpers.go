@@ -12,16 +12,18 @@ import (
 // NewTestHome creates a minimal Home instance for testing
 func NewTestHome() *Home {
 	return &Home{
-		helpOverlay:      NewHelpOverlay(),
-		search:           NewSearch(),
-		globalSearch:     NewGlobalSearch(),
-		newDialog:        NewNewDialog(),
-		groupDialog:      NewGroupDialog(),
-		forkDialog:       NewForkDialog(),
-		confirmDialog:    NewConfirmDialog(),
-		mcpDialog:        NewMCPDialog(),
-		previewCache:     make(map[string]string),
-		previewCacheTime: make(map[string]time.Time),
+		helpOverlay:   NewHelpOverlay(),
+		search:        NewSearch(),
+		globalSearch:  NewGlobalSearch(),
+		newDialog:     NewNewDialog(),
+		groupDialog:   NewGroupDialog(),
+		forkDialog:    NewForkDialog(),
+		confirmDialog: NewConfirmDialog(),
+		mcpDialog:     NewMCPDialog(),
+		PreviewManager: &PreviewManager{
+			previewCache:     make(map[string]string),
+			previewCacheTime: make(map[string]time.Time),
+		},
 		AnalyticsManager: &AnalyticsManager{
 			analyticsCache:       make(map[string]*session.SessionAnalytics),
 			geminiAnalyticsCache: make(map[string]*session.GeminiSessionAnalytics),

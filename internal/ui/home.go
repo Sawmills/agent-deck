@@ -164,16 +164,7 @@ type Home struct {
 	reloadVersion  uint64     // Incremented on each reload to prevent stale background saves
 	reloadMu       sync.Mutex // Protects reloadVersion and isReloading for thread-safe access
 
-	// Preview cache (async fetching - View() must be pure, no blocking I/O)
-	previewCache      map[string]string    // sessionID -> cached preview content
-	previewCacheTime  map[string]time.Time // sessionID -> when cached (for expiration)
-	previewCacheMu    sync.RWMutex         // Protects previewCache for thread-safety
-	previewFetchingID string               // ID currently being fetched (prevents duplicate fetches)
-
-	// Preview debouncing (PERFORMANCE: prevents subprocess spawn on every keystroke)
-	// During rapid navigation, we delay preview fetch by 150ms to let navigation settle
-	pendingPreviewID  string     // Session ID waiting for debounced fetch
-	previewDebounceMu sync.Mutex // Protects pendingPreviewID
+	*PreviewManager
 
 	// Round-robin status updates (Priority 1A optimization)
 	// Instead of updating ALL sessions every tick, we update batches of 5-10 sessions
@@ -452,8 +443,10 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 		instanceByID:        make(map[string]*session.Instance),
 		groupTree:           session.NewGroupTree([]*session.Instance{}),
 		flatItems:           []session.Item{},
-		previewCache:        make(map[string]string),
-		previewCacheTime:    make(map[string]time.Time),
+		PreviewManager: &PreviewManager{
+			previewCache:     make(map[string]string),
+			previewCacheTime: make(map[string]time.Time),
+		},
 		AnalyticsManager: &AnalyticsManager{
 			analyticsCache:       make(map[string]*session.SessionAnalytics),
 			geminiAnalyticsCache: make(map[string]*session.GeminiSessionAnalytics),
@@ -1128,15 +1121,6 @@ func (h *Home) loadSessions() tea.Msg {
 	return msg
 }
 
-// invalidatePreviewCache removes a session's preview from the cache
-// Called when session is deleted, renamed, or moved to ensure stale data is not displayed
-func (h *Home) invalidatePreviewCache(sessionID string) {
-	h.previewCacheMu.Lock()
-	delete(h.previewCache, sessionID)
-	delete(h.previewCacheTime, sessionID)
-	h.previewCacheMu.Unlock()
-}
-
 // setError sets an error with timestamp for auto-dismiss
 func (h *Home) setError(err error) {
 	h.err = err
@@ -1273,39 +1257,6 @@ func (h *Home) hasActiveAnimation(sessionID string) bool {
 
 	// Not ready yet - keep showing animation
 	return true
-}
-
-// fetchPreview returns a command that asynchronously fetches preview content
-// This keeps View() pure (no blocking I/O) as per Bubble Tea best practices
-func (h *Home) fetchPreview(inst *session.Instance) tea.Cmd {
-	if inst == nil {
-		return nil
-	}
-	sessionID := inst.ID
-	return func() tea.Msg {
-		content, err := inst.PreviewFull()
-		return previewFetchedMsg{
-			sessionID: sessionID,
-			content:   content,
-			err:       err,
-		}
-	}
-}
-
-// fetchPreviewDebounced returns a command that triggers preview fetch after debounce delay
-// PERFORMANCE: Prevents rapid subprocess spawning during keyboard navigation
-// The 150ms delay allows navigation to settle before spawning tmux capture-pane
-func (h *Home) fetchPreviewDebounced(sessionID string) tea.Cmd {
-	const debounceDelay = 150 * time.Millisecond
-
-	h.previewDebounceMu.Lock()
-	h.pendingPreviewID = sessionID
-	h.previewDebounceMu.Unlock()
-
-	return func() tea.Msg {
-		time.Sleep(debounceDelay)
-		return previewDebounceMsg{sessionID: sessionID}
-	}
 }
 
 // detectOpenCodeSessionCmd returns a command that asynchronously detects
