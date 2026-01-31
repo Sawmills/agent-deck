@@ -19,7 +19,8 @@ func NewTestHome() *Home {
 		groupDialog:   NewGroupDialog(),
 		forkDialog:    NewForkDialog(),
 		confirmDialog: NewConfirmDialog(),
-		mcpDialog:     NewMCPDialog(),
+		mcpDialog:  NewMCPDialog(),
+		AIManager:  &AIManager{},
 		PreviewManager: &PreviewManager{
 			previewCache:     make(map[string]string),
 			previewCacheTime: make(map[string]time.Time),

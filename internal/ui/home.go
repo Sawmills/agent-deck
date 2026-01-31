@@ -142,12 +142,11 @@ type Home struct {
 	analyticsPanel      *AnalyticsPanel          // For displaying session analytics
 	geminiModelDialog   *GeminiModelDialog       // For selecting Gemini model
 	sessionPickerDialog *SessionPickerDialog     // For sending output to another session
-	aiChatPanel         *AIChatPanel             // For AI chat about sessions
 	watchDialog         *WatchDialog             // For watch goal management
 	observer            *session.SessionObserver // Tracks observations
 	watchMgr            *session.WatchManager    // Manages watch goals
-	aiProvider          ai.AIProvider
 
+	*AIManager
 	*AnalyticsManager
 
 	// State
@@ -443,6 +442,7 @@ func NewHomeWithProfileAndMode(profile string, isPrimary bool) *Home {
 		instanceByID:        make(map[string]*session.Instance),
 		groupTree:           session.NewGroupTree([]*session.Instance{}),
 		flatItems:           []session.Item{},
+		AIManager: &AIManager{},
 		PreviewManager: &PreviewManager{
 			previewCache:     make(map[string]string),
 			previewCacheTime: make(map[string]time.Time),
@@ -1278,72 +1278,6 @@ func (h *Home) detectOpenCodeSessionCmd(inst *session.Instance) tea.Cmd {
 			instanceID: instanceID,
 			sessionID:  inst.OpenCodeSessionID,
 		}
-	}
-}
-
-func (h *Home) generateAISummary(inst *session.Instance) tea.Cmd {
-	if inst == nil || h.aiProvider == nil {
-		return nil
-	}
-
-	if inst.AISummary != "" && time.Since(inst.AISummaryGeneratedAt) < 5*time.Minute {
-		return nil
-	}
-
-	sessionID := inst.ID
-	tool := inst.Tool
-	title := inst.Title
-
-	todoContext := inst.GetOpenCodeTodoContext()
-	terminalOutput, _ := inst.Preview()
-
-	if todoContext == "" && terminalOutput == "" && inst.LatestPrompt == "" {
-		return nil
-	}
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		systemPrompt := fmt.Sprintf(`Summarize this %s coding session in ONE sentence (max 150 chars).
-Focus on WHAT was built/fixed/implemented. Be specific with endpoints, features, or components.
-Do not start with "The user" or "This session" - just state the work done.
-If the context is unclear, just return the session title as-is without explanation.
-
-Good examples:
-- "Added GET /v1/organizations/{org_id} endpoint with membership validation and tests"
-- "Fixed Docker build failures in CI pipeline by updating base image"
-- "Implemented dark mode toggle with localStorage persistence"`, tool)
-
-		var contextParts []string
-		contextParts = append(contextParts, fmt.Sprintf("Session title: %s", title))
-
-		if todoContext != "" {
-			contextParts = append(contextParts, todoContext)
-		} else if terminalOutput != "" {
-			lines := strings.Split(terminalOutput, "\n")
-			if len(lines) > 50 {
-				lines = lines[len(lines)-50:]
-			}
-			contextParts = append(contextParts, fmt.Sprintf("Recent terminal output:\n%s", strings.Join(lines, "\n")))
-		}
-
-		userPrompt := strings.Join(contextParts, "\n\n")
-		combinedPrompt := systemPrompt + "\n\n" + userPrompt
-
-		response, err := h.aiProvider.Chat(ctx, []ai.Message{
-			{Role: "user", Content: combinedPrompt},
-		})
-		if err != nil {
-			return aiSummaryMsg{sessionID: sessionID, err: err}
-		}
-
-		summary := strings.TrimSpace(response)
-		if len(summary) > 160 {
-			summary = summary[:157] + "..."
-		}
-
-		return aiSummaryMsg{sessionID: sessionID, summary: summary}
 	}
 }
 
